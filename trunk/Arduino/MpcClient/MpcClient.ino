@@ -1,8 +1,41 @@
-#define BUFFER_SIZE 64
 
 //
-// Serial buffer support
+// IR Remote support
 //
+
+#include <IRremote.h>
+#include <IRremoteInt.h>
+
+const byte RECV_PIN = 11;
+IRrecv irrecv(RECV_PIN);
+decode_results IrResult;
+
+//
+// Defines IR events - what remote and button corresponds to what command
+//
+
+typedef struct {
+  byte DecodeType;      // NEC, SHARP etc
+  unsigned long Value;  // 32bit IR value
+  char *Command;        // Command to send
+} IrEvent_t; 
+
+IrEvent_t IrEvents[] = {
+  // Black multimedia
+  {NEC, 0x0687CBCA, "mpc play 1"},
+  {NEC, 0x0687CBF4, "mpc play 2"},
+  {NEC, 0x0687CBCC, "mpc play 3"},
+  {NEC, 0x0687CBEC, "mpc stop"},
+};
+
+#define IrEventsSize (sizeof (IrEvents) / sizeof (IrEvent_t)) 
+
+//
+// Circular buffer support - used for detecting the command line prompt
+//
+
+#define BUFFER_SIZE 64
+#define R_COMMAND_PROMPT ":/# "
 
 int BufferStart = 0;
 int BufferEnd = 0;
@@ -74,6 +107,9 @@ void MpcGetLine (void) {
   SerialBuffer [i] = '\0';
 }
 
+//
+// Setup
+//
 
 void setup() {
   char *str;
@@ -86,6 +122,15 @@ void setup() {
   // set the data rate for the SoftwareSerial port
   Serial1.begin(115200);
   
+  //
+  // Enable IR remote receiver.
+  // Pin 13 is used to power up the receiver, so set it to HIGH
+  //
+  
+  digitalWrite(13, HIGH);
+  pinMode(13, OUTPUT);   
+  irrecv.enableIRIn(); 
+
   //
   // Wait for the last message, that is enabling swap, and send Enter to activate the console
   //
@@ -104,59 +149,63 @@ void setup() {
 typedef enum {
   S_BOOTED, 
   S_WAITING,    // For command prompt
-  S_WAITING1,    // For command prompt
   S_COMMAND,
   S_PARSE_SONG,
 } RouterStatus_t;
 
-#define R_COMMAND_PROMPT ":/# "
-
 void loop() {
   static RouterStatus_t Status = S_BOOTED;
-  static char *Command = "mpc play 1";
-  byte c;
+  static char *Command; // = "mpc play 1";
+  byte c, i;
   static unsigned long int LastCommand = 0;
+
+  //
+  // Process the IR input. If any IR code was received,
+  // search the whole event list and execute all the events corresponding to the IR code
+  //
+
+  if (irrecv.decode(&IrResult)) {
+    irrecv.resume(); // Receive the next value
+    for (i = 0; i < IrEventsSize; i++) {
+      if ((IrResult.decode_type == IrEvents[i].DecodeType) &&
+          (IrResult.value == IrEvents[i].Value)) {
+           Command = IrEvents[i].Command;
+      }
+    } 
+  }
   
+  //
+  // If any serial byte is available, push it into the input queue
+  //
+
   if (Serial1.available ()) {
     PushToQueue (Serial1.read ());
   }
   
   switch (Status) {
     case S_BOOTED:      // We have just booted, and we better wait for the command prompt
-//      Serial.write('b');
       Status = S_WAITING;
       break;
       
-    case S_WAITING:
-////      Serial.write('w');
-//      Status = S_WAITING1;
-//      break;
-    
-    case S_WAITING1:
+    case S_WAITING:    // Waiting for the command prompt
       if (SearchString (R_COMMAND_PROMPT)) {
         Status = S_COMMAND;
       }
       break;
       
     case S_COMMAND:    // System waiting at command prompt, send the command
-//      Serial.write('c');
       if (Command != NULL) {
         Serial1.print(Command);
         Serial1.write(0x0A);
         Command = NULL;
         LastCommand = millis ();
-//        Serial.write(' ');
-//        Serial.println(LastCommand);
         Status = S_WAITING;
-      } else {      // No command pending, get the status every five seconds
+      } else {      // No command pending, get the status every ten seconds
         if (millis () > (LastCommand + 10000)) {
-//          Serial.write('t');
           Serial1.print("mpc -f \"%title%\"");
           Serial1.write(0x0A);
           Status = S_PARSE_SONG;
           LastCommand = millis ();
-//          Serial.write(' ');
-//          Serial.println(LastCommand);
         } else {
           Status = S_WAITING;
         }
