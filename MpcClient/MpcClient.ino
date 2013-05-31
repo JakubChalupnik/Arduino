@@ -18,17 +18,33 @@ typedef struct {
   byte DecodeType;      // NEC, SHARP etc
   unsigned long Value;  // 32bit IR value
   char *Command;        // Command to send
+  byte Flag;            // Flags describing details of the specific command
 } IrEvent_t; 
+
+#define FE_STOP 0x01
+#define FE_PLAY 0x02
+#define FE_VOLUME 0x04
 
 IrEvent_t IrEvents[] = {
   // Black multimedia
-  {NEC, 0x0687CBCA, "mpc play 1"},
-  {NEC, 0x0687CBF4, "mpc play 2"},
-  {NEC, 0x0687CBCC, "mpc play 3"},
-  {NEC, 0x0687CBEC, "mpc stop"},
+  {NEC, 0x0687CBCA, "mpc play 1", FE_PLAY},
+  {NEC, 0x0687CBF4, "mpc play 2", FE_PLAY},
+  {NEC, 0x0687CBCC, "mpc play 3", FE_PLAY},
+  {NEC, 0x0687CBEC, "mpc stop", FE_STOP},
+  {NEC, 0x0687CBFA, "amixer -c 0 sset Speaker 10%-", FE_VOLUME},
+  {NEC, 0x0687CBFE, "amixer -c 0 sset Speaker 10%+", FE_VOLUME},
+  {NEC, 0x0687CBFC, "amixer -c 0 sset Speaker 0", FE_VOLUME},
+  {NEC, 0x0687CBC2, "amixer -c 0 sset Speaker 50%", FE_VOLUME},
 };
 
 #define IrEventsSize (sizeof (IrEvents) / sizeof (IrEvent_t)) 
+
+unsigned int Flags = 0;
+#define F_PLAYING 0x01
+
+#define FlagSet(F) {Flags |= F;}
+#define FlagClear(F) {Flags &= ~F;}
+#define FlagIsSet(F) (Flags & F)
 
 //
 // Circular buffer support - used for detecting the command line prompt
@@ -170,6 +186,11 @@ void loop() {
       if ((IrResult.decode_type == IrEvents[i].DecodeType) &&
           (IrResult.value == IrEvents[i].Value)) {
            Command = IrEvents[i].Command;
+           if (IrEvents[i].Flag & FE_PLAY) {
+             FlagSet (F_PLAYING);
+           } else if (IrEvents[i].Flag & FE_STOP) {
+             FlagClear (F_PLAYING);
+           }
       }
     } 
   }
@@ -201,7 +222,7 @@ void loop() {
         LastCommand = millis ();
         Status = S_WAITING;
       } else {      // No command pending, get the status every ten seconds
-        if (millis () > (LastCommand + 10000)) {
+        if ((FlagIsSet (F_PLAYING)) && (millis () > (LastCommand + 10000))) {
           Serial1.print("mpc -f \"%title%\"");
           Serial1.write(0x0A);
           Status = S_PARSE_SONG;
