@@ -1,3 +1,5 @@
+#include <LiquidCrystal.h>
+
 //
 // IR Remote support
 //
@@ -143,6 +145,8 @@ char* strtrim(char* input) {
     return start;
 }
 
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+
 //
 // Setup
 //
@@ -171,6 +175,7 @@ void setup() {
   irrecv.enableIRIn(); 
   
   Serial1.write(0x0A);    // Emit enter, to make sure we'll bring command prompt up
+  lcd.begin(16, 2);
 }
 
 typedef enum {
@@ -301,6 +306,9 @@ void loop() {
       }
 
       Serial.println(SerialBuffer);
+      SerialBuffer[16] = 0;
+      lcd.setCursor(0, 0);
+      lcd.print(SerialBuffer);
       Status = S_WAITING;
       break;
   }
