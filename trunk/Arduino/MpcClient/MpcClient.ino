@@ -123,6 +123,24 @@ void MpcGetLine (void) {
   SerialBuffer [i] = '\0';
 }
 
+char* strtrim(char* input) {
+    char* start = input;
+    while (isspace(*start)) { //trim left
+        start++;
+    }
+
+    char* ptr = start;
+    char* end = start;
+    while (*ptr++ != '\0') { //trim right
+        if (!isspace(*ptr)) { //only move end pointer if char isn't a space
+            end = ptr;
+        }
+    }
+
+    *end = '\0'; //terminate the trimmed string with a null
+    return start;
+}
+
 //
 // Setup
 //
@@ -174,6 +192,7 @@ void loop() {
   static char *Command; // = "mpc play 1";
   byte c, i;
   static unsigned long int LastCommand = 0;
+  char *TrimmedString;
 
   //
   // Process the IR input. If any IR code was received,
@@ -223,7 +242,7 @@ void loop() {
         Status = S_WAITING;
       } else {      // No command pending, get the status every ten seconds
         if ((FlagIsSet (F_PLAYING)) && (millis () > (LastCommand + 10000))) {
-          Serial1.print("mpc -f \"%title%\"");
+          Serial1.print("mpc -f '%title%\\n%name%'");
           Serial1.write(0x0A);
           Status = S_PARSE_SONG;
           LastCommand = millis ();
@@ -243,6 +262,11 @@ void loop() {
       
       MpcGetLine ();
       MpcGetLine ();
+      TrimmedString = strtrim (SerialBuffer);
+      if (TrimmedString[0] == '\0') {    // No song name - use station name instead
+        MpcGetLine ();
+      }
+
       Serial.println(SerialBuffer);
       Status = S_WAITING;
       break;
