@@ -1,4 +1,3 @@
-
 //
 // IR Remote support
 //
@@ -6,9 +5,11 @@
 #include <IRremote.h>
 #include <IRremoteInt.h>
 
-const byte RECV_PIN = 11;
+const byte RECV_PIN = 17;
 IRrecv irrecv(RECV_PIN);
 decode_results IrResult;
+const byte RECV_PIN_GND = 14;
+const byte RECV_PIN_VCC = 15;
 
 //
 // Defines IR events - what remote and button corresponds to what command
@@ -41,6 +42,7 @@ IrEvent_t IrEvents[] = {
 
 unsigned int Flags = 0;
 #define F_PLAYING 0x01
+#define F_MILLIS 0x02
 
 #define FlagSet(F) {Flags |= F;}
 #define FlagClear(F) {Flags &= ~F;}
@@ -158,31 +160,23 @@ void setup() {
   
   //
   // Enable IR remote receiver.
-  // Pin 13 is used to power up the receiver, so set it to HIGH
+  // Pin RECV_PIN_VCC is used to power up the receiver, so set it to HIGH
+  // Pin RECV_PIN_GND is used to ground the receiver, so set it to LOW
   //
   
-  digitalWrite(13, HIGH);
-  pinMode(13, OUTPUT);   
+  digitalWrite(RECV_PIN_VCC, HIGH);
+  pinMode(RECV_PIN_VCC, OUTPUT);   
+  digitalWrite(RECV_PIN_GND, LOW);
+  pinMode(RECV_PIN_GND, OUTPUT);   
   irrecv.enableIRIn(); 
-
-  //
-  // Wait for the last message, that is enabling swap, and send Enter to activate the console
-  //
   
-  while (1) {
-    MpcGetLine ();
-    str = strstr(SerialBuffer, "swap on ");
-    if (str != NULL) {
-      break;
-    }
-  }
-  
-  Serial1.write(0x0A);    // Activate the console
+  Serial1.write(0x0A);    // Emit enter, to make sure we'll bring command prompt up
 }
 
 typedef enum {
   S_BOOTED, 
   S_WAITING,    // For command prompt
+  S_WAITING_TIMEOUT,
   S_COMMAND,
   S_PARSE_SONG,
 } RouterStatus_t;
@@ -193,6 +187,18 @@ void loop() {
   byte c, i;
   static unsigned long int LastCommand = 0;
   char *TrimmedString;
+  static unsigned long int LastMillis = 0;
+  unsigned long int Millis = millis ();
+  static unsigned int Timeout = 0;
+
+  //
+  // Detect if millis changed - if yes, set flag for this loop iteration
+  //
+  
+  if (Millis != LastMillis) {
+    FlagSet (F_MILLIS);
+    LastMillis = Millis;
+  }
 
   //
   // Process the IR input. If any IR code was received,
@@ -223,13 +229,40 @@ void loop() {
   }
   
   switch (Status) {
-    case S_BOOTED:      // We have just booted, and we better wait for the command prompt
+    
+    //
+    // We have just booted, and we better wait for the command prompt after we emulate Enter
+    //
+    
+    case S_BOOTED:      
       Status = S_WAITING;
+      Serial1.write(0x0A);
       break;
       
+    //
+    // Prepare timeout of 5s
+    //
+  
     case S_WAITING:    // Waiting for the command prompt
+      Timeout = 5000;
+      Status = S_WAITING_TIMEOUT;
+      break;
+      
+    //
+    // Wait for either command prompt appearing, or timeout of 5 seconds
+    // Use F_MILLIS as this flag is set once per millisecond
+    //
+    
+    case S_WAITING_TIMEOUT:    // Waiting for the command prompt
       if (SearchString (R_COMMAND_PROMPT)) {
         Status = S_COMMAND;
+      } else if (FlagIsSet (F_MILLIS)) {
+        if (Timeout) {
+          Timeout--;
+        } else {
+          Status = S_WAITING;
+          Serial1.write(0x0A);
+        }
       }
       break;
       
@@ -271,5 +304,7 @@ void loop() {
       Status = S_WAITING;
       break;
   }
+
+  FlagClear (F_MILLIS);
 }
 
