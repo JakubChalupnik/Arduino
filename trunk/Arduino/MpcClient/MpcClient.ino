@@ -15,12 +15,12 @@
 // LCD support
 //
 
-#include <font.h>
-#include <T6963.h>
-#include "Medusa__14.c"
+#include <LiquidCrystal.h>
 
-T6963 LCD(240,64,8,32);// 240x64 Pixel and 6x8 Font
-const byte LcdVeePin = 53;
+#define   CONTRAST_PIN   6
+#define   BACKLIGHT_PIN  8
+#define   CONTRAST       0
+LiquidCrystal lcd(7, 14, 5, 4, 3, 2, BACKLIGHT_PIN, POSITIVE );
 
 //
 // IR Remote support
@@ -194,15 +194,21 @@ void setup() {
   Serial1.write(0x0A);    
 
   //
-  // Enable LCD, and pull Vee pin low to enable Vee after init
+  // Enable LCD, set contrast etc. and initialize the display
   //
   
-  LCD.Initialize();
+  pinMode(CONTRAST_PIN, OUTPUT);
+  analogWrite ( CONTRAST_PIN, CONTRAST );
   
-  pinMode(LcdVeePin, OUTPUT);   
-  digitalWrite(LcdVeePin, LOW);
-  
-  LCD.glcd_print1_P(3, 0, "Netduola init", &Medusa__14, 0);
+  lcd.backlight();
+    
+  lcd.begin(40,2);               // initialize the lcd 
+
+  lcd.home ();                   // go home
+  lcd.print("MPC client");  
+  lcd.setCursor ( 0, 1 );        // go to the next line
+  lcd.print ("(c) 2013 Kubik");      
+
 }
 
 //
@@ -347,8 +353,10 @@ void loop() {
       }
 
 //      Serial.println(SerialBuffer);
-//      SerialBuffer[16] = 0;
-      LCD.glcd_print2_P(3, 0, SerialBuffer, &Medusa__14, 0);
+      SerialBuffer[40] = 0;
+      lcd.home ();                   // go home
+      lcd.print(SerialBuffer);  
+//      lcd.setCursor ( 0, 1 );        // go to the next line
       Status = S_WAITING;
       break;
   }
