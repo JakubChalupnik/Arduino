@@ -1,4 +1,26 @@
-#include <LiquidCrystal.h>
+/*********************************************************************
+ *
+ * Basic MPC client communicating via serial terminal to real mpc
+ *
+ *********************************************************************
+ * FileName:   MpcClient.ino     
+ * Processor:  Arduino Mega1280      
+ *
+ * Author   Date       Comment
+ *~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ * Kubik    2.6.2013   Added file headers and basic T6963 support
+ ********************************************************************/
+ 
+//
+// LCD support
+//
+
+#include <font.h>
+#include <T6963.h>
+#include "Medusa__14.c"
+
+T6963 LCD(240,64,8,32);// 240x64 Pixel and 6x8 Font
+const byte LcdVeePin = 53;
 
 //
 // IR Remote support
@@ -7,11 +29,9 @@
 #include <IRremote.h>
 #include <IRremoteInt.h>
 
-const byte RECV_PIN = 17;
+const byte RECV_PIN = 22;
 IRrecv irrecv(RECV_PIN);
 decode_results IrResult;
-const byte RECV_PIN_GND = 14;
-const byte RECV_PIN_VCC = 15;
 
 //
 // Defines IR events - what remote and button corresponds to what command
@@ -50,8 +70,8 @@ unsigned int Flags = 0;
 #define FlagClear(F) {Flags &= ~F;}
 #define FlagIsSet(F) (Flags & F)
 
-//
-// Circular buffer support - used for detecting the command line prompt
+//---------------------------------------------------------------------------
+// Circular buffer support - used to detect the command line prompt
 //
 
 #define BUFFER_SIZE 64
@@ -98,7 +118,7 @@ int SearchString (char *s) {
     return *p == CircularBuffer[i];
 }
 
-//
+//---------------------------------------------------------------------------
 // Line read support
 //
 
@@ -145,42 +165,53 @@ char* strtrim(char* input) {
     return start;
 }
 
-LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
-
-//
+//---------------------------------------------------------------------------
 // Setup
 //
 
 void setup() {
   char *str;
   
-  // Open serial communications and wait for port to open:
-  Serial.begin(115200);
-
-  Serial.println("MPC client");
-
-  // set the data rate for the SoftwareSerial port
-  Serial1.begin(115200);
+  //
+  // Open serial communications and display program name
+  //
   
+  Serial.begin(115200);
+  Serial.println("[MPC client]");
+ 
   //
   // Enable IR remote receiver.
-  // Pin RECV_PIN_VCC is used to power up the receiver, so set it to HIGH
-  // Pin RECV_PIN_GND is used to ground the receiver, so set it to LOW
   //
   
-  digitalWrite(RECV_PIN_VCC, HIGH);
-  pinMode(RECV_PIN_VCC, OUTPUT);   
-  digitalWrite(RECV_PIN_GND, LOW);
-  pinMode(RECV_PIN_GND, OUTPUT);   
   irrecv.enableIRIn(); 
   
-  Serial1.write(0x0A);    // Emit enter, to make sure we'll bring command prompt up
-  lcd.begin(16, 2);
+  //
+  // Set the data rate for the SoftwareSerial port
+  // Emit enter, to make sure we'll bring command prompt up
+  //
+  
+  Serial1.begin(115200);
+  Serial1.write(0x0A);    
+
+  //
+  // Enable LCD, and pull Vee pin low to enable Vee after init
+  //
+  
+  LCD.Initialize();
+  
+  pinMode(LcdVeePin, OUTPUT);   
+  digitalWrite(LcdVeePin, LOW);
+  
+  LCD.glcd_print1_P(3, 0, "Netduola init", &Medusa__14, 0);
 }
+
+//
+// Enum describing the states of the MPC communication
+//
 
 typedef enum {
   S_BOOTED, 
-  S_WAITING,    // For command prompt
+  S_WAITING,    
   S_WAITING_TIMEOUT,
   S_COMMAND,
   S_PARSE_SONG,
@@ -188,7 +219,7 @@ typedef enum {
 
 void loop() {
   static RouterStatus_t Status = S_BOOTED;
-  static char *Command; // = "mpc play 1";
+  static char *Command; 
   byte c, i;
   static unsigned long int LastCommand = 0;
   char *TrimmedString;
@@ -230,7 +261,9 @@ void loop() {
   //
 
   if (Serial1.available ()) {
-    PushToQueue (Serial1.read ());
+    c = Serial1.read ();
+    PushToQueue (c);
+    Serial.write(c);
   }
   
   switch (Status) {
@@ -267,6 +300,14 @@ void loop() {
         } else {
           Status = S_WAITING;
           Serial1.write(0x0A);
+//          for (i = 0; i < BUFFER_SIZE; i++) {
+//            Serial.write(CircularBuffer[i]);
+//          }
+//          Serial.write('!');
+//          Serial.print(BufferStart);
+//          Serial.write('!');
+//          Serial.print(BufferEnd);
+//          Serial.println("!");
         }
       }
       break;
@@ -305,10 +346,9 @@ void loop() {
         MpcGetLine ();
       }
 
-      Serial.println(SerialBuffer);
-      SerialBuffer[16] = 0;
-      lcd.setCursor(0, 0);
-      lcd.print(SerialBuffer);
+//      Serial.println(SerialBuffer);
+//      SerialBuffer[16] = 0;
+      LCD.glcd_print2_P(3, 0, SerialBuffer, &Medusa__14, 0);
       Status = S_WAITING;
       break;
   }
