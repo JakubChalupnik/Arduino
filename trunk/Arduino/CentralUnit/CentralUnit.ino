@@ -1,3 +1,4 @@
+#include <OneWire.h>
 #include <Time.h>
 
 #include <EtherCard.h>
@@ -9,6 +10,20 @@
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_PCD8544.h>
+
+//
+// Debug options
+//
+
+#define DEBUG_OW_TEMP 1
+#define DEBUG_ETHERNET 0
+
+//
+// OneWire support
+//
+
+#define OW_PIN_INT 27
+OneWire OneWireInternal(OW_PIN_INT);
 
 //
 // Nokia display variables
@@ -87,11 +102,11 @@ void PacketDecode () {
   TemperaturePayload_t *Temp;
 
   switch (*rf12_data) {
-    
+
     case RF12_PACKET_TIME:
       // Ignore, we do not need it as we use NTP
       break;
-      
+
     case RF12_PACKET_METEO:
       // No active sender yet
       break;
@@ -228,11 +243,192 @@ byte TemperatureTask (void) {
   return 0;
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//
+// Temperature sensor variables
+//
+
+typedef enum {
+  S_IDLE, S_WAIT, S_READ, S_COMP, S_IDLE2, S_WAIT2, S_READ2, S_COMP2}
+state_t;
+
+byte type_s1;
+byte data1[12];
+byte addr1[8];
+byte type_s2;
+byte data2[12];
+byte addr2[8];
+
+// TemperaturePayload_t TempPayload;
+
+//
+// Temperature sensor support
+//
+
+void TempPoll(void) {
+  byte i;
+  byte present = 0;
+//  float celsius;
+  unsigned int raw;
+//   signed int sraw = raw;
+  static state_t State = S_IDLE;
+  static uint32_t WaitTime;
+
+  switch (State) {
+  case S_IDLE:
+    OneWireInternal.reset();
+    OneWireInternal.select(addr1);
+    OneWireInternal.write(0x44,1);         // start conversion, with parasite power on at the end
+    WaitTime = millis () + 1000;
+    State = S_WAIT;
+    break;
+
+  case S_WAIT:
+    if (millis () > WaitTime) {
+      State = S_READ;
+    }
+    break;
+
+  case S_READ:
+    present = OneWireInternal.reset();
+    OneWireInternal.select(addr1);
+    OneWireInternal.write(0xBE);         // Read Scratchpad
+    State = S_COMP;
+    break;
+
+  case S_COMP:
+    for ( i = 0; i < 9; i++) {           // we need 9 bytes
+      data1[i] = OneWireInternal.read();
+    }
+
+    // convert the data to actual temperature
+
+    raw = (data1[1] << 8) | data1[0];
+    if (type_s1) {
+      raw = raw << 3; // 9 bit resolution default
+      if (data1[7] == 0x10) {
+        // count remain gives full 12 bit resolution
+        raw = (raw & 0xFFF0) + 12 - data1[6];
+      }
+    }
+    else {
+      byte cfg = (data1[4] & 0x60);
+      if (cfg == 0x00) raw = raw << 3;  // 9 bit resolution, 93.75 ms
+      else if (cfg == 0x20) raw = raw << 2; // 10 bit res, 187.5 ms
+      else if (cfg == 0x40) raw = raw << 1; // 11 bit res, 375 ms
+      // default is 12 bit resolution, 750 ms conversion time
+    }
+
+#if DEBUG_OW_TEMP
+      Serial.print("Temp ");
+      Serial.print(raw, HEX);
+//       Serial.print(" ");
+//       sraw = raw;
+//       if (sraw < 0) {
+//         Serial.print("-");
+//         sraw = - sraw;
+//       }
+// 
+//       Serial.print(sraw / 16);
+//       Serial.print(".");
+//       Serial.println(sraw & 0x000F);
+#endif // DEBUG_OW_TEMP
+
+//     TempPayload.temp1 = raw;
+    InTemp = raw;
+    State = S_IDLE2;
+    break;
+
+  case S_IDLE2:
+    OneWireInternal.reset();
+    OneWireInternal.select(addr2);
+    OneWireInternal.write(0x44,1);         // start conversion, with parasite power on at the end
+    WaitTime = millis () + 1000;
+    State = S_WAIT2;
+    break;
+
+  case S_WAIT2:
+    if (millis () > WaitTime) {
+      State = S_READ2;
+    }
+    break;
+
+  case S_READ2:
+    present = OneWireInternal.reset();
+    OneWireInternal.select(addr2);
+    OneWireInternal.write(0xBE);         // Read Scratchpad
+    State = S_COMP2;
+    break;
+
+  case S_COMP2:
+    for ( i = 0; i < 9; i++) {           // we need 9 bytes
+      data2[i] = OneWireInternal.read();
+    }
+
+    // convert the data to actual temperature
+
+    raw = (data2[1] << 8) | data2[0];
+    if (type_s2) {
+      raw = raw << 3; // 9 bit resolution default
+      if (data2[7] == 0x10) {
+        // count remain gives full 12 bit resolution
+        raw = (raw & 0xFFF0) + 12 - data2[6];
+      }
+    }
+    else {
+      byte cfg = (data2[4] & 0x60);
+      if (cfg == 0x00) raw = raw << 3;  // 9 bit resolution, 93.75 ms
+      else if (cfg == 0x20) raw = raw << 2; // 10 bit res, 187.5 ms
+      else if (cfg == 0x40) raw = raw << 1; // 11 bit res, 375 ms
+      // default is 12 bit resolution, 750 ms conversion time
+    }
+
+#if DEBUG_OW_TEMP
+//     celsius = (float)raw / 16.0;
+    Serial.print("Temp2 ");
+//     Serial.println(celsius);
+    Serial.println(raw, HEX);
+#endif // DEBUG_OW_TEMP
+
+//     TempPayload.temp2 = raw;
+    OutTemp = raw;
+    State = S_IDLE;
+    break;
+
+  default:
+    State = S_IDLE;
+    break;
+  }
+
+}
+
+
+
+
+
+
+
 //================================================
 // Main code - setup and loop
 //
 
 void setup () {
+  byte i;
   
   Serial.begin (57600);     // Opens serial port used for debugging
   delay (1000);
@@ -240,7 +436,7 @@ void setup () {
   //
   // Configure ShiftPWM
   //
-  
+
   ShiftPWM.SetAmountOfRegisters (numRegisters);
   ShiftPWM.Start (75, maxBrightness);
   ShiftPWM.PrintInterruptLoad ();
@@ -249,7 +445,7 @@ void setup () {
   //
   // Configure Nokia display
   //
-  
+
   display.begin();
   display.setContrast(60);    // 60 seems to be a good value, original value of 50 is too low
   display.clearDisplay();   // clears the screen and buffer
@@ -309,6 +505,7 @@ void setup () {
   if (!ether.dhcpSetup())
     Serial.println( F( "DHCP failed" ));
   
+  
   ether.printIp("My IP: ", ether.myip);
   ether.printIp("Netmask: ", ether.mymask);
   ether.printIp("GW IP: ", ether.gwip);
@@ -322,13 +519,115 @@ void setup () {
   
   display.clearDisplay ();        // Clear display buffer but does not display it yet -> 
                                   // init screen will remain until the main loop really writes someting
-  DnsLookup ();                                  
+  DnsLookup ();
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  //
+  // Initialise the first temperature sensor
+  //
+
+  if ( !OneWireInternal.search(addr1)) {
+    Serial.println("No more addresses.");
+    Serial.println();
+    OneWireInternal.reset_search();
+    delay(250);
+  }
+
+  Serial.print("ROM =");
+  for( i = 0; i < 8; i++) {
+    Serial.write(' ');
+    Serial.print(addr1[i], HEX);
+  }
+
+  if (OneWire::crc8(addr1, 7) != addr1[7]) {
+    Serial.println("CRC is not valid!");
+    return;
+  }
+  Serial.println();
+
+  // the first ROM byte indicates which chip
+  switch (addr1[0]) {
+  case 0x10:
+    Serial.println("  Chip = DS18S20");  // or old DS1820
+    type_s1 = 1;
+    break;
+  case 0x28:
+    Serial.println("  Chip = DS18B20");
+    type_s1 = 0;
+    break;
+  case 0x22:
+    Serial.println("  Chip = DS1822");
+    type_s1 = 0;
+    break;
+  default:
+    Serial.println("Device is not a DS18x20 family device.");
+    return;
+  }
+
+  //
+  // Initialise the second temperature sensor
+  //
+
+  if ( !OneWireInternal.search(addr2)) {
+    Serial.println("No more addresses.");
+    Serial.println();
+    OneWireInternal.reset_search();
+    delay(250);
+  }
+
+  Serial.print("ROM =");
+  for( i = 0; i < 8; i++) {
+    Serial.write(' ');
+    Serial.print(addr2[i], HEX);
+  }
+
+  if (OneWire::crc8(addr2, 7) != addr2[7]) {
+    Serial.println("CRC is not valid!");
+    return;
+  }
+  Serial.println();
+
+  // the first ROM byte indicates which chip
+  switch (addr2[0]) {
+  case 0x10:
+    Serial.println("  Chip = DS18S20");  // or old DS1820
+    type_s2 = 1;
+    break;
+  case 0x28:
+    Serial.println("  Chip = DS18B20");
+    type_s2 = 0;
+    break;
+  case 0x22:
+    Serial.println("  Chip = DS1822");
+    type_s2 = 0;
+    break;
+  default:
+    Serial.println("Device is not a DS18x20 family device.");
+    return;
+  }
+  
+
+
+
+
+
+
 }
 
 void loop() {
   byte LcdNeedsRedraw;
   static unsigned long int LastTime = 0;
-  
+
   //
   // Following variable gets ORed with return value of all tasks, and if any of them requests screen redraw, 
   // it will be done so at the end of the loop
@@ -340,6 +639,7 @@ void loop() {
   // Process all the tasks
   //
   
+  TempPoll ();
   UpdateTimeNtp ();                  // Process NTP time sync now and then
   LcdNeedsRedraw |= HbusTask ();     // Send any scheduled HBUS messages
   LcdNeedsRedraw |= Rfm12Task ();    // Check for any incoming RFM12 packets and process them
@@ -362,7 +662,7 @@ void loop() {
   
   if (LastTime != (millis () >> 2)) {
     LastTime = millis () >> 2;
-   
+
     if (ShiftPWM.m_PWMValues[2] > 0) {
       ShiftPWM.m_PWMValues[2]--;
     }
