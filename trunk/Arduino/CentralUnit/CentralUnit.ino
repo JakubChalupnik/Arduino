@@ -16,7 +16,6 @@
 //
 
 #define DEBUG_OW_TEMP 1
-#define DEBUG_ETHERNET 0
 
 //
 // OneWire support
@@ -24,6 +23,13 @@
 
 #define OW_PIN_INT 27
 OneWire OneWireInternal(OW_PIN_INT);
+#if DEBUG_OW_TEMP
+  #define DebugOwTemp(...) Serial.print(__VA_ARGS__)
+  #define DebugOwTempln(...) Serial.println(__VA_ARGS__)
+#else  
+  #define DebugOwTemp(...)
+  #define DebugOwTempln(...)
+#endif
 
 //
 // Nokia display variables
@@ -71,13 +77,10 @@ const bool ShiftPWM_balanceLoad = false;
 //
 
 unsigned char maxBrightness = 15;
-//unsigned char pwmFrequency = 75;
 int numRegisters = 1;
 int numOutputs = numRegisters*8;
 int numRGBLeds = numRegisters*8/3;
 int fadingMode = 0; //start with all LED's off.
-
-//unsigned long startTime = 0; // start time for the chosen fading mode
 
 //
 // HBus definitions and variables
@@ -243,22 +246,6 @@ byte TemperatureTask (void) {
   return 0;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 //
 // Temperature sensor variables
 //
@@ -274,8 +261,6 @@ byte type_s2;
 byte data2[12];
 byte addr2[8];
 
-// TemperaturePayload_t TempPayload;
-
 //
 // Temperature sensor support
 //
@@ -283,9 +268,7 @@ byte addr2[8];
 void TempPoll(void) {
   byte i;
   byte present = 0;
-//  float celsius;
   unsigned int raw;
-//   signed int sraw = raw;
   static state_t State = S_IDLE;
   static uint32_t WaitTime;
 
@@ -334,22 +317,8 @@ void TempPoll(void) {
       // default is 12 bit resolution, 750 ms conversion time
     }
 
-#if DEBUG_OW_TEMP
-      Serial.print("Temp ");
-      Serial.print(raw, HEX);
-//       Serial.print(" ");
-//       sraw = raw;
-//       if (sraw < 0) {
-//         Serial.print("-");
-//         sraw = - sraw;
-//       }
-// 
-//       Serial.print(sraw / 16);
-//       Serial.print(".");
-//       Serial.println(sraw & 0x000F);
-#endif // DEBUG_OW_TEMP
-
-//     TempPayload.temp1 = raw;
+    DebugOwTemp("Temp ");
+    DebugOwTempln(raw, HEX);
     InTemp = raw;
     State = S_IDLE2;
     break;
@@ -398,14 +367,8 @@ void TempPoll(void) {
       // default is 12 bit resolution, 750 ms conversion time
     }
 
-#if DEBUG_OW_TEMP
-//     celsius = (float)raw / 16.0;
-    Serial.print("Temp2 ");
-//     Serial.println(celsius);
-    Serial.println(raw, HEX);
-#endif // DEBUG_OW_TEMP
-
-//     TempPayload.temp2 = raw;
+    DebugOwTemp("Temp2 ");
+    DebugOwTempln(raw, HEX);
     OutTemp = raw;
     State = S_IDLE;
     break;
@@ -414,21 +377,103 @@ void TempPoll(void) {
     State = S_IDLE;
     break;
   }
-
 }
 
+void OwInitTemp (void) {
+  byte i;
+  
+  //
+  // Initialise the first temperature sensor
+  //
 
+  if ( !OneWireInternal.search(addr1)) {
+    DebugOwTempln(F("No more addresses."));
+    OneWireInternal.reset_search();
+    delay(250);
+  }
 
+#if DEBUG_OW_TEMP
+  DebugOwTemp(F("ROM ="));
+  for( i = 0; i < 8; i++) {
+    DebugOwTemp(" ");
+    DebugOwTemp(addr1[i], HEX);
+  }
+#endif
 
+  if (OneWire::crc8(addr1, 7) != addr1[7]) {
+    DebugOwTempln(F("CRC is not valid!"));
+    return;
+  }
+  DebugOwTempln();
 
+  // the first ROM byte indicates which chip
+  switch (addr1[0]) {
+  case 0x10:
+    DebugOwTempln(F("  Chip = DS18S20"));  // or old DS1820
+    type_s1 = 1;
+    break;
+  case 0x28:
+    DebugOwTempln(F("  Chip = DS18B20"));
+    type_s1 = 0;
+    break;
+  case 0x22:
+    DebugOwTempln(F("  Chip = DS1822"));
+    type_s1 = 0;
+    break;
+  default:
+    DebugOwTempln(F("Device is not a DS18x20 family device."));
+    return;
+  }
 
+  //
+  // Initialise the second temperature sensor
+  //
+
+  if ( !OneWireInternal.search(addr2)) {
+    DebugOwTempln(F("No more addresses."));
+    OneWireInternal.reset_search();
+    delay(250);
+  }
+
+#if DEBUG_OW_TEMP
+  DebugOwTemp(F("ROM ="));
+  for( i = 0; i < 8; i++) {
+    DebugOwTemp(" ");
+    DebugOwTemp(addr2[i], HEX);
+  }
+#endif
+
+  if (OneWire::crc8(addr2, 7) != addr2[7]) {
+    DebugOwTempln(F("CRC is not valid!"));
+    return;
+  }
+  DebugOwTempln();
+
+  // the first ROM byte indicates which chip
+  switch (addr2[0]) {
+  case 0x10:
+    DebugOwTempln(F("  Chip = DS18S20"));  // or old DS1820
+    type_s2 = 1;
+    break;
+  case 0x28:
+    DebugOwTempln(F("  Chip = DS18B20"));
+    type_s2 = 0;
+    break;
+  case 0x22:
+    DebugOwTempln(F("  Chip = DS1822"));
+    type_s2 = 0;
+    break;
+  default:
+    DebugOwTempln(F("Device is not a DS18x20 family device."));
+    return;
+  }
+}  
 
 //================================================
-// Main code - setup and loop
+// Main code - setup
 //
 
 void setup () {
-  byte i;
   
   Serial.begin (57600);     // Opens serial port used for debugging
   delay (1000);
@@ -505,12 +550,13 @@ void setup () {
   if (!ether.dhcpSetup())
     Serial.println( F( "DHCP failed" ));
   
-  
   ether.printIp("My IP: ", ether.myip);
   ether.printIp("Netmask: ", ether.mymask);
   ether.printIp("GW IP: ", ether.gwip);
   ether.printIp("DNS IP: ", ether.dnsip);
 
+  DnsLookup ();
+  
   //
   // Time init - set default value
   //
@@ -519,110 +565,16 @@ void setup () {
   
   display.clearDisplay ();        // Clear display buffer but does not display it yet -> 
                                   // init screen will remain until the main loop really writes someting
-  DnsLookup ();
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
   //
-  // Initialise the first temperature sensor
+  // Initialize OneWire temperature sensors
   //
-
-  if ( !OneWireInternal.search(addr1)) {
-    Serial.println("No more addresses.");
-    Serial.println();
-    OneWireInternal.reset_search();
-    delay(250);
-  }
-
-  Serial.print("ROM =");
-  for( i = 0; i < 8; i++) {
-    Serial.write(' ');
-    Serial.print(addr1[i], HEX);
-  }
-
-  if (OneWire::crc8(addr1, 7) != addr1[7]) {
-    Serial.println("CRC is not valid!");
-    return;
-  }
-  Serial.println();
-
-  // the first ROM byte indicates which chip
-  switch (addr1[0]) {
-  case 0x10:
-    Serial.println("  Chip = DS18S20");  // or old DS1820
-    type_s1 = 1;
-    break;
-  case 0x28:
-    Serial.println("  Chip = DS18B20");
-    type_s1 = 0;
-    break;
-  case 0x22:
-    Serial.println("  Chip = DS1822");
-    type_s1 = 0;
-    break;
-  default:
-    Serial.println("Device is not a DS18x20 family device.");
-    return;
-  }
-
-  //
-  // Initialise the second temperature sensor
-  //
-
-  if ( !OneWireInternal.search(addr2)) {
-    Serial.println("No more addresses.");
-    Serial.println();
-    OneWireInternal.reset_search();
-    delay(250);
-  }
-
-  Serial.print("ROM =");
-  for( i = 0; i < 8; i++) {
-    Serial.write(' ');
-    Serial.print(addr2[i], HEX);
-  }
-
-  if (OneWire::crc8(addr2, 7) != addr2[7]) {
-    Serial.println("CRC is not valid!");
-    return;
-  }
-  Serial.println();
-
-  // the first ROM byte indicates which chip
-  switch (addr2[0]) {
-  case 0x10:
-    Serial.println("  Chip = DS18S20");  // or old DS1820
-    type_s2 = 1;
-    break;
-  case 0x28:
-    Serial.println("  Chip = DS18B20");
-    type_s2 = 0;
-    break;
-  case 0x22:
-    Serial.println("  Chip = DS1822");
-    type_s2 = 0;
-    break;
-  default:
-    Serial.println("Device is not a DS18x20 family device.");
-    return;
-  }
   
-
-
-
-
-
-
+  OwInitTemp (); 
 }
+
+//================================================
+// Main code - loop
+//
 
 void loop() {
   byte LcdNeedsRedraw;
@@ -640,6 +592,7 @@ void loop() {
   //
   
   TempPoll ();
+  
   UpdateTimeNtp ();                  // Process NTP time sync now and then
   LcdNeedsRedraw |= HbusTask ();     // Send any scheduled HBUS messages
   LcdNeedsRedraw |= Rfm12Task ();    // Check for any incoming RFM12 packets and process them
@@ -671,6 +624,5 @@ void loop() {
       ShiftPWM.m_PWMValues[3]--;
     }
   }
-  
 }
 
