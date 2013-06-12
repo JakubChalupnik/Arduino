@@ -16,6 +16,7 @@
 //
 
 #define DEBUG_OW_TEMP 1
+#define DEBUG_ETHERNET 0
 
 //
 // OneWire support
@@ -26,7 +27,7 @@ OneWire OneWireInternal(OW_PIN_INT);
 #if DEBUG_OW_TEMP
   #define DebugOwTemp(...) Serial.print(__VA_ARGS__)
   #define DebugOwTempln(...) Serial.println(__VA_ARGS__)
-#else  
+#else
   #define DebugOwTemp(...)
   #define DebugOwTempln(...)
 #endif
@@ -52,6 +53,14 @@ static uint8_t mynetmask[4] = { 0,0,0,0 };
 static uint8_t gwip[4] = { 0,0,0,0 };
 static uint8_t dnsip[4] = { 0,0,0,0 };
 static uint8_t dhcpsvrip[4] = { 0,0,0,0 };
+
+#if DEBUG_ETHERNET
+  #define DebugEthernet(...) Serial.print(__VA_ARGS__)
+  #define DebugEthernetln(...) Serial.println(__VA_ARGS__)
+#else
+  #define DebugEthernet(...)
+  #define DebugEthernetln(...)
+#endif
 
 // Packet buffer, must be big enough to packet and payload
 byte Ethernet::buffer[ETHERNET_BUFFER_SIZE];
@@ -96,6 +105,9 @@ int fadingMode = 0; //start with all LED's off.
 
 int InTemp = 0;
 int OutTemp = 0;
+byte Flags = 0;
+#define F_TIME_UPDATED 0x01
+TimePayload_t TimePayload;
 
 //================================================
 // Packet decode
@@ -113,13 +125,13 @@ void PacketDecode () {
     case RF12_PACKET_METEO:
       // No active sender yet
       break;
-      
+
     case RF12_PACKET_TEMPERATURE:
       Temp = (TemperaturePayload_t *) rf12_data;
       InTemp = Temp->temp1;
       OutTemp = Temp->temp2;
       break;
-      
+
     default:
       break;
   }
@@ -473,14 +485,14 @@ void OwInitTemp (void) {
   }
 
   TempPayload.type = RF12_PACKET_TEMPERATURE;
-}  
+}
 
 //================================================
 // Main code - setup
 //
 
 void setup () {
-  
+
   Serial.begin (57600);     // Opens serial port used for debugging
   delay (1000);
 
@@ -500,10 +512,10 @@ void setup () {
   display.begin();
   display.setContrast(60);    // 60 seems to be a good value, original value of 50 is too low
   display.clearDisplay();   // clears the screen and buffer
-  
+
   pinMode (PinBacklight, OUTPUT);    // Configure display backlight brightness
   analogWrite (PinBacklight, 255);
-  
+
   //
   // Display intro message
   //
@@ -521,7 +533,7 @@ void setup () {
   display.print("(c)2013 Kubik");
   display.display();
   
-  // 
+  //
   // Configure RS-485 - configure driver pin, disable driver (set to RECEIVE) and configure Serial1 speed
   // Configure RS485 LEDs and turn them off
   //
@@ -574,8 +586,10 @@ void setup () {
   //
   // Initialize OneWire temperature sensors
   //
-  
-  OwInitTemp (); 
+
+  OwInitTemp ();
+
+  TimePayload.type = RF12_PACKET_TIME;
 }
 
 //================================================
@@ -589,18 +603,18 @@ void loop() {
   MilliTimer wait;                 // radio needs some time to power up, why?
 
   //
-  // Following variable gets ORed with return value of all tasks, and if any of them requests screen redraw, 
+  // Following variable gets ORed with return value of all tasks, and if any of them requests screen redraw,
   // it will be done so at the end of the loop
   //
-  
+
   LcdNeedsRedraw = 0;
-  
+
   //
   // Process all the tasks
   //
-  
+
   TempPoll ();
-  
+
   UpdateTimeNtp ();                  // Process NTP time sync now and then
   LcdNeedsRedraw |= HbusTask ();     // Send any scheduled HBUS messages
   LcdNeedsRedraw |= Rfm12Task ();    // Check for any incoming RFM12 packets and process them
@@ -612,7 +626,7 @@ void loop() {
   } else {
     ShiftPWM.SetOne (1, 0);
   }    
-  
+
   //
   // End of the loop, do all the housekeeping
   //
@@ -634,23 +648,34 @@ void loop() {
   }
 
   //
-  // Send temperature info via RF12
+  // Send temperature and time packets via RF12
   //
 
   if (millis () > (LastTempPacketTime + 3000)) {
-    rf12_sleep(RF12_WAKEUP);         // turn radio back on at the last moment
     LastTempPacketTime = millis ();
-    while (!wait.poll(5)) {
+
+    while (!rf12_canSend()) {
       TempPoll ();
       rf12_recvDone();
     }
 
+    rf12_sendStart(0, &TempPayload, sizeof TempPayload, 1); // sync mode!
+  }
+
+  if ((Flags & F_TIME_UPDATED) && (second () == 0)) {
+    Flags &= ~F_TIME_UPDATED;
+    TimePayload.year = year () - 2000;
+    TimePayload.month = month ();
+    TimePayload.day = day ();
+    TimePayload.hour = hour ();
+    TimePayload.minute = minute ();
+
     while (!rf12_canSend()) {
+      TempPoll ();
       rf12_recvDone();
     }
 
-    rf12_sendStart(0, &TempPayload, sizeof TempPayload, 1); // sync mode!
-    rf12_sleep(RF12_SLEEP);          // turn the radio off
+    rf12_sendStart(0, &TimePayload, sizeof TimePayload, 1); // sync mode!
   }
 }
 
