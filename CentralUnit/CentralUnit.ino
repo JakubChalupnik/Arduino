@@ -261,6 +261,8 @@ byte type_s2;
 byte data2[12];
 byte addr2[8];
 
+TemperaturePayload_t TempPayload;
+
 //
 // Temperature sensor support
 //
@@ -320,6 +322,7 @@ void TempPoll(void) {
     DebugOwTemp("Temp ");
     DebugOwTempln(raw, HEX);
     InTemp = raw;
+    TempPayload.temp1 = raw;
     State = S_IDLE2;
     break;
 
@@ -370,6 +373,7 @@ void TempPoll(void) {
     DebugOwTemp("Temp2 ");
     DebugOwTempln(raw, HEX);
     OutTemp = raw;
+    TempPayload.temp2 = raw;
     State = S_IDLE;
     break;
 
@@ -467,6 +471,8 @@ void OwInitTemp (void) {
     DebugOwTempln(F("Device is not a DS18x20 family device."));
     return;
   }
+
+  TempPayload.type = RF12_PACKET_TEMPERATURE;
 }  
 
 //================================================
@@ -579,6 +585,8 @@ void setup () {
 void loop() {
   byte LcdNeedsRedraw;
   static unsigned long int LastTime = 0;
+  static unsigned long int LastTempPacketTime = 0;
+  MilliTimer wait;                 // radio needs some time to power up, why?
 
   //
   // Following variable gets ORed with return value of all tasks, and if any of them requests screen redraw, 
@@ -623,6 +631,26 @@ void loop() {
     if (ShiftPWM.m_PWMValues[3] > 0) {
       ShiftPWM.m_PWMValues[3]--;
     }
+  }
+
+  //
+  // Send temperature info via RF12
+  //
+
+  if (millis () > (LastTempPacketTime + 3000)) {
+    rf12_sleep(RF12_WAKEUP);         // turn radio back on at the last moment
+    LastTempPacketTime = millis ();
+    while (!wait.poll(5)) {
+      TempPoll ();
+      rf12_recvDone();
+    }
+
+    while (!rf12_canSend()) {
+      rf12_recvDone();
+    }
+
+    rf12_sendStart(0, &TempPayload, sizeof TempPayload, 1); // sync mode!
+    rf12_sleep(RF12_SLEEP);          // turn the radio off
   }
 }
 
