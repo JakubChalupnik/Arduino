@@ -126,7 +126,7 @@ void UpdateTimeNtp (void) {
 //          Serial.print( " " );
 //          Serial.println( clock );
           setTime (timeLong);
-          adjustTime(3600);
+          adjustTime(7200);
         }
       }
     }
