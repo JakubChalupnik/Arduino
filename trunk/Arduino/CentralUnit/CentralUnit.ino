@@ -37,7 +37,7 @@ OneWire OneWireInternal(OW_PIN_INT);
 //
 
 Adafruit_PCD8544 display = Adafruit_PCD8544(18, 19, 20, 22, 21);
-const byte PinBacklight = 15;
+const byte PinLcdShiftPwm = 6;    // The LED backlight is odd, does not quite work as expected
 
 byte LcdFlags = 0;
 #define LCD_NEEDS_UPDATE 0x01
@@ -98,6 +98,13 @@ int fadingMode = 0; //start with all LED's off.
 #include "typedefs.h"
 #include "hbus.h"
 #include "hbus_cfg.h"
+
+//
+// Analog support (light intensity)
+//
+
+const byte PinLightIntensity = A6;    // Analog pin 6
+byte LightIntensity;                  // cca 218 for darkness, close to 0 for bright light
 
 //
 // Other global variables
@@ -258,6 +265,25 @@ byte TemperatureTask (void) {
   return 0;
 }
 
+//
+// Light intensity task
+//
+
+byte LightIntensityTask (void) {
+  static unsigned int Average = 0;
+  
+  Average = ((Average * 31) + (analogRead(A6) >> 2)) / 32; 
+  
+  LightIntensity = Average;
+  return 0;
+//  display.fillRect (0, 32, 84, 8, WHITE);
+//  display.setCursor(0, 32);
+//  display.print(Average);
+//  display.print("     ");
+//  return 1;
+}
+
+  
 //
 // Temperature sensor variables
 //
@@ -502,7 +528,6 @@ void setup () {
 
   ShiftPWM.SetAmountOfRegisters (numRegisters);
   ShiftPWM.Start (75, maxBrightness);
-  ShiftPWM.PrintInterruptLoad ();
   ShiftPWM.SetAll(0);
 
   //
@@ -512,9 +537,6 @@ void setup () {
   display.begin();
   display.setContrast(60);    // 60 seems to be a good value, original value of 50 is too low
   display.clearDisplay();   // clears the screen and buffer
-
-  pinMode (PinBacklight, OUTPUT);    // Configure display backlight brightness
-  analogWrite (PinBacklight, 255);
 
   //
   // Display intro message
@@ -602,6 +624,8 @@ void loop() {
   static unsigned long int LastTempPacketTime = 0;
   MilliTimer wait;                 // radio needs some time to power up, why?
 
+//  ShiftPWM.SetOne (5, LightIntensity >> 4);  // LCD brightness, does not quite work.
+  
   //
   // Following variable gets ORed with return value of all tasks, and if any of them requests screen redraw,
   // it will be done so at the end of the loop
@@ -615,11 +639,17 @@ void loop() {
 
   TempPoll ();
 
+  ShiftPWM.SetOne (3, maxBrightness);
   UpdateTimeNtp ();                  // Process NTP time sync now and then
+  ShiftPWM.SetOne (3, 0);
+  
   LcdNeedsRedraw |= HbusTask ();     // Send any scheduled HBUS messages
   LcdNeedsRedraw |= Rfm12Task ();    // Check for any incoming RFM12 packets and process them
   LcdNeedsRedraw |= TimeTask ();     // Display time if it has changed
   LcdNeedsRedraw |= TemperatureTask ();     // Display temperature if it has changed
+  LcdNeedsRedraw |= LightIntensityTask ();
+  
+  TempPoll ();
 
   if (second () & 0x01) {
     ShiftPWM.SetOne (1, 3);
@@ -634,7 +664,9 @@ void loop() {
   if (LcdNeedsRedraw) {
     display.display();
   }
-  
+
+  TempPoll ();
+
   if (LastTime != (millis () >> 2)) {
     LastTime = millis () >> 2;
 
