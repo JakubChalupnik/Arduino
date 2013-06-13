@@ -580,6 +580,7 @@ void setup () {
   // EtherCard init
   //
   
+  ShiftPWM.SetOne (3, maxBrightness);
   uint8_t rev = ether.begin(sizeof Ethernet::buffer, mymac, 4);
   Serial.print( F("\nENC28J60 Revision ") );
   Serial.println( rev, DEC );
@@ -596,6 +597,7 @@ void setup () {
   ether.printIp("DNS IP: ", ether.dnsip);
 
   DnsLookup ();
+  ShiftPWM.SetOne (3, 0);
   
   //
   // Time init - set default value
@@ -639,9 +641,7 @@ void loop() {
 
   TempPoll ();
 
-  ShiftPWM.SetOne (3, maxBrightness);
   UpdateTimeNtp ();                  // Process NTP time sync now and then
-  ShiftPWM.SetOne (3, 0);
   
   LcdNeedsRedraw |= HbusTask ();     // Send any scheduled HBUS messages
   LcdNeedsRedraw |= Rfm12Task ();    // Check for any incoming RFM12 packets and process them

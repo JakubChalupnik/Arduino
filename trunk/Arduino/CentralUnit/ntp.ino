@@ -28,7 +28,9 @@ uint32_t timeLong;
 
 
 void DnsLookup (void) {
+  ShiftPWM.SetOne (3, maxBrightness);
   ether.dnsLookup( (char*)pgm_read_word(&(ntpList[currentTimeserver])) );
+  ShiftPWM.SetOne (3, 0);
 }
 
 
@@ -51,6 +53,7 @@ void UpdateTimeNtp (void) {
   if (plen > 0) {
     timeLong = 0L;
 
+   ShiftPWM.SetOne (3, maxBrightness);
     if (ether.ntpProcessAnswer(&timeLong,clientPort)) {
       DebugEthernetln( F( "Time has arrived" ));
       DebugEthernetln(timeLong); // secs since year 1900
@@ -82,5 +85,6 @@ void UpdateTimeNtp (void) {
     if( ++currentTimeserver >= NUM_TIMESERVERS )
       currentTimeserver = 0;
   }
+  ShiftPWM.SetOne (3, 0);
 }
 
