@@ -37,7 +37,7 @@ OneWire OneWireInternal(OW_PIN_INT);
 //
 
 Adafruit_PCD8544 display = Adafruit_PCD8544(18, 19, 20, 22, 21);
-const byte PinLcdShiftPwm = 6;    // The LED backlight is odd, does not quite work as expected
+const byte PinLcdShiftPwm = 15;    // The LED backlight is odd, does not quite work as expected
 
 byte LcdFlags = 0;
 #define LCD_NEEDS_UPDATE 0x01
@@ -90,6 +90,19 @@ int numRegisters = 1;
 int numOutputs = numRegisters*8;
 int numRGBLeds = numRegisters*8/3;
 int fadingMode = 0; //start with all LED's off.
+
+//#define LED_l 7
+//#define LED_2 6
+//#define LED_3 5
+//#define LED_4 4
+
+#define LED_ETHERNET  7
+#define LED_HEART     6
+#define LED_RFM12     5
+#define LED_HBUS      4
+
+#define LED_OFF (maxBrightness + 1)
+#define LED_ON (maxBrightness - 0)
 
 //
 // HBus definitions and variables
@@ -218,13 +231,13 @@ byte Rfm12Task (void) {
   static uint16_t counter = 0;
 
   if (rf12_recvDone() && rf12_crc == 0) {
-    ShiftPWM.SetOne (3, 31);
+    ShiftPWM.SetOne (LED_RFM12, LED_ON);
     PacketDecode ();
     display.fillRect (0, 8, 84, 8, WHITE);
     display.setCursor(0, 8);
     display.print("RFM12 #");
     display.print(counter++);
-//    ShiftPWM.SetOne (3, 0);
+    ShiftPWM.SetOne (LED_RFM12, LED_OFF);
     return 1;
   } 
   return 0;
@@ -272,15 +285,15 @@ byte TemperatureTask (void) {
 byte LightIntensityTask (void) {
   static unsigned int Average = 0;
   
-  Average = ((Average * 31) + (analogRead(A6) >> 2)) / 32; 
+  Average = ((Average * 31) + (analogRead(PinLightIntensity) >> 2)) / 32; 
   
   LightIntensity = Average;
-  return 0;
-//  display.fillRect (0, 32, 84, 8, WHITE);
-//  display.setCursor(0, 32);
-//  display.print(Average);
-//  display.print("     ");
-//  return 1;
+//  return 0;
+  display.fillRect (0, 32, 84, 8, WHITE);
+  display.setCursor(0, 32);
+  display.print(Average);
+  display.print("     ");
+  return 1;
 }
 
   
@@ -513,7 +526,7 @@ void OwInitTemp (void) {
   TempPayload.type = RF12_PACKET_TEMPERATURE;
 }
 
-//================================================
+//===============================================================================================
 // Main code - setup
 //
 
@@ -528,7 +541,7 @@ void setup () {
 
   ShiftPWM.SetAmountOfRegisters (numRegisters);
   ShiftPWM.Start (75, maxBrightness);
-  ShiftPWM.SetAll(0);
+  ShiftPWM.SetAll(maxBrightness + 1);
 
   //
   // Configure Nokia display
@@ -538,6 +551,9 @@ void setup () {
   display.setContrast(60);    // 60 seems to be a good value, original value of 50 is too low
   display.clearDisplay();   // clears the screen and buffer
 
+  pinMode (PinLcdShiftPwm, OUTPUT);
+  analogWrite (PinLcdShiftPwm, 128);
+  
   //
   // Display intro message
   //
@@ -580,7 +596,7 @@ void setup () {
   // EtherCard init
   //
   
-  ShiftPWM.SetOne (3, maxBrightness);
+  ShiftPWM.SetOne (LED_ETHERNET, LED_ON);
   uint8_t rev = ether.begin(sizeof Ethernet::buffer, mymac, 4);
   Serial.print( F("\nENC28J60 Revision ") );
   Serial.println( rev, DEC );
@@ -597,7 +613,7 @@ void setup () {
   ether.printIp("DNS IP: ", ether.dnsip);
 
   DnsLookup ();
-  ShiftPWM.SetOne (3, 0);
+  ShiftPWM.SetOne (LED_ETHERNET, LED_OFF);
   
   //
   // Time init - set default value
@@ -616,7 +632,7 @@ void setup () {
   TimePayload.type = RF12_PACKET_TIME;
 }
 
-//================================================
+//===============================================================================================
 // Main code - loop
 //
 
@@ -626,7 +642,7 @@ void loop() {
   static unsigned long int LastTempPacketTime = 0;
   MilliTimer wait;                 // radio needs some time to power up, why?
 
-//  ShiftPWM.SetOne (5, LightIntensity >> 4);  // LCD brightness, does not quite work.
+  analogWrite (PinLcdShiftPwm, LightIntensity + 30);
   
   //
   // Following variable gets ORed with return value of all tasks, and if any of them requests screen redraw,
@@ -652,9 +668,9 @@ void loop() {
   TempPoll ();
 
   if (second () & 0x01) {
-    ShiftPWM.SetOne (1, 3);
+    ShiftPWM.SetOne (LED_HEART, LED_ON);
   } else {
-    ShiftPWM.SetOne (1, 0);
+    ShiftPWM.SetOne (LED_HEART, LED_OFF);
   }    
 
   //
@@ -667,17 +683,17 @@ void loop() {
 
   TempPoll ();
 
-  if (LastTime != (millis () >> 2)) {
-    LastTime = millis () >> 2;
-
-    if (ShiftPWM.m_PWMValues[2] > 0) {
-      ShiftPWM.m_PWMValues[2]--;
-    }
-      
-    if (ShiftPWM.m_PWMValues[3] > 0) {
-      ShiftPWM.m_PWMValues[3]--;
-    }
-  }
+//  if (LastTime != (millis () >> 2)) {
+//    LastTime = millis () >> 2;
+//
+//    if (ShiftPWM.m_PWMValues[2] > 0) {
+//      ShiftPWM.m_PWMValues[2]--;
+//    }
+//      
+//    if (ShiftPWM.m_PWMValues[3] > 0) {
+//      ShiftPWM.m_PWMValues[3]--;
+//    }
+//  }
 
   //
   // Send temperature and time packets via RF12
