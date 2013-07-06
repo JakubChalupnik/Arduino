@@ -27,8 +27,8 @@
 //#define Rs485RxLedOn()           {}
 //#define Rs485RxLedOff()          {}
 
-#define Rs485TxLedOn()           {ShiftPWM.SetOne (2, 31);}
-//#define Rs485TxLedOff()          {}
+#define Rs485TxLedOn()           {ShiftPWM.SetOne (LED_HBUS, LED_ON);}   
+#define Rs485TxLedOff()          {ShiftPWM.SetOne (LED_HBUS, LED_OFF);}   
 
 //================================================
 // HBUS hooks
