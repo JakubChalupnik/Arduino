@@ -15,7 +15,7 @@
 // HBUS functions
 //
 
-#define Rs485SendByte(c)       {Serial1.write (c); Serial.write (c);}
+//#define Rs485SendByte(c)       {Serial1.write (c); Serial.write (c);}
 #define Rs485SenderBusy()      (!(UCSR1A & (1 << TXC1)))
 #define Rs485SenderBusyClear() {UCSR1A |= (1 << TXC1);}
 #define Rs485GetByte()         (Serial1.read ())
@@ -44,7 +44,7 @@
 #define HOOK_BEFORE_RX()               
 #define HOOK_AFTER_RX()                
 #define HOOK_BEFORE_TX()                {Rs485TxLedOn ();}
-#define HOOK_AFTER_TX()                
+#define HOOK_AFTER_TX()                 {Rs485TxLedOff ();}
 
 #endif
 

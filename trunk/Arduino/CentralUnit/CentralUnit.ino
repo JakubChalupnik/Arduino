@@ -74,7 +74,7 @@ const int ShiftPWM_latchPin = 24;
 const int ShiftPWM_dataPin = 26;
 const int ShiftPWM_clockPin = 25;
 
-const bool ShiftPWM_invertOutputs = true; // LED's turn on if the pin is low
+const bool ShiftPWM_invertOutputs = false; // LED's turn on if the pin is high
 const bool ShiftPWM_balanceLoad = false;
 
 #include <ShiftPWM.h>   // include ShiftPWM.h after setting the pins!
@@ -101,8 +101,8 @@ int fadingMode = 0; //start with all LED's off.
 #define LED_RFM12     5
 #define LED_HBUS      4
 
-#define LED_OFF (maxBrightness + 1)
-#define LED_ON (maxBrightness - 0)
+#define LED_OFF 0
+#define LED_ON 1 //maxBrightness
 
 //
 // HBus definitions and variables
@@ -203,8 +203,19 @@ byte TimeTask (void) {
 
 byte HbusTask (void) {
   static uint16_t counter = 0;
+
+//  if ((Flags & F_TIME_UPDATED) && (second () == 0)) {
+//    Serial.println ("<");
+//    send_buff[0] = MSG_BROADCAST;
+//    send_buff[1] = MSG_SET_CLOCK;
+//    send_buff[2] = month ();
+//    send_buff[3] = day ();
+//    send_buff[4] = hour ();
+//    send_buff[5] = minute ();
+//    send_buff[6] = 0;
+//    send_message(7);
   
-  if ((millis () % 10000) == 0) {
+  if ((millis () % 5000) < 10) {
     send_buff[0] = MSG_BROADCAST;
     send_buff[1] = MSG_SET_7SEG;
     send_buff[2] = (byte) ~ 0xEE;
@@ -217,6 +228,7 @@ byte HbusTask (void) {
     display.setCursor(0,0);
     display.print("HBUS  #");
     display.print(counter++);
+//    Serial.println (">");
     return 1;
   }
   return 0;
@@ -541,7 +553,7 @@ void setup () {
 
   ShiftPWM.SetAmountOfRegisters (numRegisters);
   ShiftPWM.Start (75, maxBrightness);
-  ShiftPWM.SetAll(maxBrightness + 1);
+  ShiftPWM.SetAll(LED_OFF);
 
   //
   // Configure Nokia display

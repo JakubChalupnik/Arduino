@@ -22,6 +22,13 @@
 // Local variables
 uint8_t send_buff[MAX_MESSAGE_LEN];
 
+void Rs485SendByte(byte c) {
+//  Serial.write (c);
+  loop_until_bit_is_set(UCSR1A, UDRE1); /* Wait until data register empty. */
+  UDR1 = c;
+//  loop_until_bit_is_set(UCSR1A, TXC1);
+} 
+
 //---------------------------------------------------------------------------
 // Helper functions
 static void send_ascii(uint8_t b) {
@@ -39,6 +46,7 @@ void send_message(uint8_t len) {
     uint8_t cksum;
     uint8_t *ptr;
 
+    UCSR1B &= 0x1F;
     HOOK_BEFORE_TX();
     Rs485EnableDriver();
     Rs485SendByte(':');
@@ -58,9 +66,9 @@ void send_message(uint8_t len) {
     send_ascii(cksum);
     Rs485SendByte(0x0D);                             // CR
     Rs485SendByte(0x0A);                             // LF
-    while(Rs485SenderBusy());
-    Rs485SenderBusyClear ();
-    Rs485DisableDriver();
+//    while(Rs485SenderBusy());
+//    Rs485SenderBusyClear ();
+//    Rs485DisableDriver();
     HOOK_AFTER_TX();
 }
 
