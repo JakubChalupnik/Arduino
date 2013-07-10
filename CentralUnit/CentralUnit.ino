@@ -127,6 +127,7 @@ int InTemp = 0;
 int OutTemp = 0;
 byte Flags = 0;
 #define F_TIME_UPDATED 0x01
+#define F_TIME_CHANGED 0x02
 TimePayload_t TimePayload;
 
 //================================================
@@ -204,32 +205,30 @@ byte TimeTask (void) {
 byte HbusTask (void) {
   static uint16_t counter = 0;
 
-//  if ((Flags & F_TIME_UPDATED) && (second () == 0)) {
-//    Serial.println ("<");
-//    send_buff[0] = MSG_BROADCAST;
-//    send_buff[1] = MSG_SET_CLOCK;
-//    send_buff[2] = month ();
-//    send_buff[3] = day ();
-//    send_buff[4] = hour ();
-//    send_buff[5] = minute ();
-//    send_buff[6] = 0;
-//    send_message(7);
-  
-  if ((millis () % 5000) < 10) {
-    send_buff[0] = MSG_BROADCAST;
-    send_buff[1] = MSG_SET_7SEG;
-    send_buff[2] = (byte) ~ 0xEE;
-    send_buff[3] = (byte) ~ 0x2E;
-    send_buff[4] = (byte) ~ 0x3A;
-    send_buff[5] = (byte) ~ 0x78;
-    send_buff[6] = 1;             // 3.0 seconds
-    send_message(7);
-    display.fillRect (0, 0, 84, 8, WHITE);
-    display.setCursor(0,0);
-    display.print("HBUS  #");
-    display.print(counter++);
-//    Serial.println (">");
-    return 1;
+  if (Flags & F_TIME_CHANGED) {
+    if ((second () == 0) && ((minute () % 5) == 0) && (timeStatus() == timeSet)) {
+      send_buff[0] = MSG_BROADCAST;
+      send_buff[1] = MSG_SET_CLOCK;
+      send_buff[2] = month ();
+      send_buff[3] = day ();
+      send_buff[4] = hour ();
+      send_buff[5] = minute ();
+      send_buff[6] = 0;
+      send_message(7);
+//      send_buff[0] = MSG_BROADCAST;
+//      send_buff[1] = MSG_SET_7SEG;
+//      send_buff[2] = (byte) ~ 0xEE;
+//      send_buff[3] = (byte) ~ 0x2E;
+//      send_buff[4] = (byte) ~ 0x3A;
+//      send_buff[5] = (byte) ~ 0x78;
+//      send_buff[6] = 1;             // 3.0 seconds
+//      send_message(7);
+      display.fillRect (0, 0, 84, 8, WHITE);
+      display.setCursor(0,0);
+      display.print("HBUS  #");
+      display.print(counter++);
+      return 1;
+    }
   }
   return 0;
 }
@@ -308,6 +307,11 @@ byte LightIntensityTask (void) {
   return 1;
 }
 
+byte LcdBacklightTask (void) {
+
+  analogWrite (PinLcdShiftPwm, LightIntensity + 30);
+  return 0;
+}
   
 //
 // Temperature sensor variables
@@ -631,7 +635,7 @@ void setup () {
   // Time init - set default value
   //
   
-  setTime (0, 0, 0, 1, 1, 2013);  // Set time to dummy value before ntp will catch up  
+//  setTime (0, 0, 0, 1, 1, 2013);  // Set time to dummy value before ntp will catch up  
   
   display.clearDisplay ();        // Clear display buffer but does not display it yet -> 
                                   // init screen will remain until the main loop really writes someting
@@ -642,6 +646,19 @@ void setup () {
   OwInitTemp ();
 
   TimePayload.type = RF12_PACKET_TIME;
+  
+  //
+  // Speed up the ADC, we don't care about precise values but speed
+  //
+  
+  // Define various ADC prescaler
+  #define PS_16  ((1 << ADPS2))
+  #define PS_32  ((1 << ADPS2) | (1 << ADPS0))
+  #define PS_64  ((1 << ADPS2) | (1 << ADPS1))
+  #define PS_128 ((1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0))
+
+  ADCSRA &= ~PS_128;  // remove bits set by Arduino library
+  ADCSRA |= PS_16;    // // choose a prescaler from above
 }
 
 //===============================================================================================
@@ -652,9 +669,17 @@ void loop() {
   byte LcdNeedsRedraw;
   static unsigned long int LastTime = 0;
   static unsigned long int LastTempPacketTime = 0;
-  MilliTimer wait;                 // radio needs some time to power up, why?
+  MilliTimer wait;                   // radio needs some time to power up
+  static byte LastSecond = 61;       // Remember last value of second() to toss tle flag up when it changes 
 
-  analogWrite (PinLcdShiftPwm, LightIntensity + 30);
+  //
+  // Did the second just change?
+  //
+  
+  if (LastSecond != second ()) {
+    Flags |= F_TIME_CHANGED;
+    LastSecond = second ();
+  }
   
   //
   // Following variable gets ORed with return value of all tasks, and if any of them requests screen redraw,
@@ -669,22 +694,25 @@ void loop() {
 
   TempPoll ();
 
-  UpdateTimeNtp ();                  // Process NTP time sync now and then
+  UpdateTimeNtp ();                         // Process NTP time sync now and then
   
-  LcdNeedsRedraw |= HbusTask ();     // Send any scheduled HBUS messages
-  LcdNeedsRedraw |= Rfm12Task ();    // Check for any incoming RFM12 packets and process them
-  LcdNeedsRedraw |= TimeTask ();     // Display time if it has changed
+  LcdNeedsRedraw |= HbusTask ();            // Send any scheduled HBUS messages
+  LcdNeedsRedraw |= Rfm12Task ();           // Check for any incoming RFM12 packets and process them
+  LcdNeedsRedraw |= TimeTask ();            // Display time if it has changed
   LcdNeedsRedraw |= TemperatureTask ();     // Display temperature if it has changed
-  LcdNeedsRedraw |= LightIntensityTask ();
-  
+  LcdNeedsRedraw |= LightIntensityTask ();  // Detect the light intensity
+  LcdNeedsRedraw |= LcdBacklightTask ();    // Update the LCD backlight
+
   TempPoll ();
 
-  if (second () & 0x01) {
-    ShiftPWM.SetOne (LED_HEART, LED_ON);
-  } else {
-    ShiftPWM.SetOne (LED_HEART, LED_OFF);
-  }    
-
+  if (Flags & F_TIME_CHANGED) {
+    if (second () & 0x01) {
+      ShiftPWM.SetOne (LED_HEART, LED_ON);
+    } else {
+      ShiftPWM.SetOne (LED_HEART, LED_OFF);
+    }    
+  }
+  
   //
   // End of the loop, do all the housekeeping
   //
@@ -722,7 +750,7 @@ void loop() {
     rf12_sendStart(0, &TempPayload, sizeof TempPayload, 1); // sync mode!
   }
 
-  if ((Flags & F_TIME_UPDATED) && (second () == 0)) {
+  if ((Flags & F_TIME_UPDATED) && (second () == 0) && (timeStatus() == timeSet)) {
     Flags &= ~F_TIME_UPDATED;
     TimePayload.year = year () - 2000;
     TimePayload.month = month ();
@@ -737,5 +765,11 @@ void loop() {
 
     rf12_sendStart(0, &TimePayload, sizeof TimePayload, 1); // sync mode!
   }
+
+  //
+  // Clear all flags that were valid for just one loop
+  //
+
+  Flags &= ~F_TIME_CHANGED;
 }
 
