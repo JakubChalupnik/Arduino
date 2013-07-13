@@ -159,6 +159,56 @@ void PacketDecode () {
 }
 
 //================================================
+// 7 segment support (for HBUS devices)
+//
+
+const unsigned char SegmentCharactersTable [] PROGMEM = {
+//  ABCDEFG
+  ~B11111100, // zero
+  ~B01100000, // one
+  ~B11011010, // two
+  ~B11110010, // three
+  ~B01100110, // four
+  ~B10110110, // five
+  ~B10111110, // six
+  ~B11100000, // seven
+  ~B11111110, // eight
+  ~B11110110, // nine
+  ~B00000000, // off       10
+  ~B11000110, // degree    11
+  ~B10011100, // C         12
+  ~B00000010, // dash      13
+};
+
+#define SegChar(c) pgm_read_byte(SegmentCharactersTable + c)
+#define SegCharC pgm_read_byte(SegmentCharactersTable + 12)
+#define SegCharDegree pgm_read_byte(SegmentCharactersTable + 11)
+#define SegCharDash pgm_read_byte(SegmentCharactersTable + 13)
+#define SegCharBlank pgm_read_byte(SegmentCharactersTable + 10)
+
+//
+// Following function takes temperature and creates corresponding
+// LED encoded text in the four byte buffer
+//
+
+void SegConvertTemp (int Temp, byte *OutBuff) {
+
+  if (Temp >= 0) {                  // Positive temperatures are displayed differently than negative ones
+    Temp = (Temp + 8) >> 4;
+    OutBuff [0] = (Temp >= 10) ? SegChar (Temp / 10) : SegCharBlank;
+    OutBuff [1] = SegChar (Temp % 10);
+    OutBuff [2] = SegCharDegree;
+    OutBuff [3] = SegCharC;
+  } else {                          // Negative temperatures have leading '-' and omit the 'C'
+    Temp = (-Temp + 8) >> 4;
+    OutBuff [0] = SegCharDash;
+    OutBuff [1] = (Temp >= 10) ? SegChar (Temp / 10) : SegCharBlank;
+    OutBuff [2] = SegChar (Temp % 10);
+    OutBuff [3] = SegCharDegree;
+  }
+}
+
+//================================================
 // Tasks
 //
 
@@ -173,9 +223,9 @@ byte TimeTask (void) {
   time_t t;
   static time_t LastTime = 0;    // Init to invalid value to make sure time will be updated after start
   byte Weekday, i;
-  
+
   t = now ();
-  if (LastTime != t) { 
+  if (LastTime != t) {
     LastTime = t;
     display.fillRect (0, 16, 84, 8, WHITE);
     display.setCursor(0, 16);
@@ -221,14 +271,25 @@ byte HbusTask (void) {
 //      send_buff[3] = (byte) ~ 0x2E;
 //      send_buff[4] = (byte) ~ 0x3A;
 //      send_buff[5] = (byte) ~ 0x78;
-//      send_buff[6] = 1;             // 3.0 seconds
+//      send_buff[6] = 10;             // 1.0 seconds
 //      send_message(7);
       display.fillRect (0, 0, 84, 8, WHITE);
       display.setCursor(0,0);
-      display.print("HBUS  #");
+      display.print("HBUS time #");
       display.print(counter++);
       return 1;
     }
+
+#ifdef HBUS_SET_LEDS
+    send_buff[0] = MSG_BROADCAST;
+    send_buff[1] = MSG_SET_LEDS;
+    if ((second () & 0x01) == 0) {
+      send_buff[2] = 0;
+    } else {
+      send_buff[2] = 0xFF;
+    }
+    send_message(3);
+#endif
   }
   return 0;
 }
@@ -748,6 +809,11 @@ void loop() {
     }
 
     rf12_sendStart(0, &TempPayload, sizeof TempPayload, 1); // sync mode!
+    send_buff[0] = MSG_BROADCAST;
+    send_buff[1] = MSG_SET_7SEG;
+    SegConvertTemp (InTemp, send_buff + 2);  // In and Out temp are in fact Out and In
+    send_buff[6] = 10;             // 1.0 seconds
+    send_message(7);
   }
 
   if ((Flags & F_TIME_UPDATED) && (second () == 0) && (timeStatus() == timeSet)) {
