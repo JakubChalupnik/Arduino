@@ -56,20 +56,47 @@
 #define C_MASK_5 0x02  
 #define C_MASK_3 0x01  
 
+//
+// Screen related defines
+//
+
+#define SX 4      // Amount of 8x8 matrixes
+#define SY 8      // Total number of rows
+
 //*******************************************************************************
 //*                               Static variables                              *
 //*******************************************************************************
 
-unsigned long MatrixBuffer [8] = {
-  0xAA000000L,
-  0x55000000L,
-  0xAA000000L,
-  0x55000000L,
-  0xAA000000L,
-  0x55000000L,
-  0xAA000000L,
-  0x55000000L
-};
+byte MatrixBuffer [2][SX * SY];
+volatile byte Flags;
+
+#define FLAGS_FADING            0x08    // Do not use - interrupt routine uses this
+#define FLAGS_FADE_PAGE         0x04    // Set for fading between screens (e.g. "flags |= FLAGS_FADE_PAGE;" )
+#define FLAGS_FLIP_PAGE         0x02    // Set for flipping screens
+#define FLAGS_PAGE_DISPLAYED    0x01    // Do not use - interrupt routine uses that
+                                        // to keep track about what screen buffer is displayed
+#define ScreenPageDisplayed()   (Flags & FLAGS_PAGE_DISPLAYED)
+#define ScreenPageInactive()    (~Flags & FLAGS_PAGE_DISPLAYED)
+
+//
+////*******************************************************************************
+////*                              Fonts                                          *
+////*******************************************************************************
+//
+////
+//// Fonts by holger.klabunde@t-online.de - I found them in a package named
+//// "T6963 based LCD(8x8).zip"
+//// The fonts are in program memory space so they have to be accessed in a special way!
+////
+//
+////const byte font_8x6[96 * 8] PROGMEM = {
+////#include "FN6X8_reduced.h"
+//const byte font_8x6[32 * 8] PROGMEM = {
+//#include "FN6X8_reduced2.h"
+//};
+//
+//#define FontByte(Index) pgm_read_byte (((PGM_P) font_8x6) + Index)
+//
 
 //*******************************************************************************
 //*                              Matrix specific code                           *
@@ -115,17 +142,24 @@ byte MbiConvertColumns (byte c) {
 
 //
 // Send the data to matrix shift registers.
-// <Column> goes to MBI5170 chips, <Row> is converted from 0..7 to bitmask and goes to HC595
+// <Columns> go to MBI5170 chips, <Row> is converted from 0..7 to bitmask and goes to HC595
 //
 
-void MatrixSend (unsigned long Columns, byte Row) {
+void MatrixSend (byte *Columns, byte Row) {
+  byte i;
+  
   ShiftSendByte (~(1 << (Row & 0x07)));
-  ShiftSendByte (MbiConvertColumns ((Columns >> 24) & 0xFF));
-  ShiftSendByte (MbiConvertColumns ((Columns >> 16) & 0xFF));
-  ShiftSendByte (MbiConvertColumns ((Columns >> 8)  & 0xFF));
-  ShiftSendByte (MbiConvertColumns ((Columns >> 0)  & 0xFF));
+  
+  for (i = 0; i < SX; i++) {
+    ShiftSendByte (MbiConvertColumns (*Columns++));
+  }
   MatrixStrobePulse ();
 }
+
+//*******************************************************************************
+//*                              Screen routines                                *
+//*******************************************************************************
+
 
 //*******************************************************************************
 //*                              Interrupt handler                              *
@@ -134,12 +168,12 @@ void MatrixSend (unsigned long Columns, byte Row) {
 void MatrixInterrupt (void) {
   static byte Row = 0;
 
-  MatrixSend (MatrixBuffer [Row], Row);
+  MatrixSend (&(MatrixBuffer [0][Row * SX]), Row);
   Row = (Row + 1) & 0x07;
 }
     
 //*******************************************************************************
-//*                              Interrupt handler                              *
+//*                            Arduino setup method                             *
 //*******************************************************************************
 
 void setup() {                
@@ -169,6 +203,7 @@ void setup() {
   
   Timer1.initialize (1000);
   Timer1.attachInterrupt (MatrixInterrupt);
+  
 }
 
 //*******************************************************************************
@@ -176,4 +211,17 @@ void setup() {
 //*******************************************************************************
 
 void loop() {
+  byte i;
+  
+  for (i = 0; i < SX * SY; i++) {
+    MatrixBuffer [0][i] = 0xAA;
+  }
+  
+  delay (100);
+  
+  for (i = 0; i < SX * SY; i++) {
+    MatrixBuffer [0][i] = 0x55;
+  }
+  
+  delay (100);
 }
