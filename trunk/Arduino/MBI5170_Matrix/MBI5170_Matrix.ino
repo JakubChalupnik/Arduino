@@ -8,6 +8,7 @@
 //* Author      Date       Comment
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       28.7.2013 First release, just testing the HW
+//* Kubik       30.7.2013 Added screen code from 3matrix clock
 //*******************************************************************************
 
 //*******************************************************************************
@@ -62,12 +63,13 @@
 
 #define SX 4      // Amount of 8x8 matrixes
 #define SY 8      // Total number of rows
+#define CONFIG_FADE_DELAY 6
 
 //*******************************************************************************
 //*                               Static variables                              *
 //*******************************************************************************
 
-byte MatrixBuffer [2][SX * SY];
+byte Screen [2][SX * SY];
 volatile byte Flags;
 
 #define FLAGS_FADING            0x08    // Do not use - interrupt routine uses this
@@ -78,25 +80,6 @@ volatile byte Flags;
 #define ScreenPageDisplayed()   (Flags & FLAGS_PAGE_DISPLAYED)
 #define ScreenPageInactive()    (~Flags & FLAGS_PAGE_DISPLAYED)
 
-//
-////*******************************************************************************
-////*                              Fonts                                          *
-////*******************************************************************************
-//
-////
-//// Fonts by holger.klabunde@t-online.de - I found them in a package named
-//// "T6963 based LCD(8x8).zip"
-//// The fonts are in program memory space so they have to be accessed in a special way!
-////
-//
-////const byte font_8x6[96 * 8] PROGMEM = {
-////#include "FN6X8_reduced.h"
-//const byte font_8x6[32 * 8] PROGMEM = {
-//#include "FN6X8_reduced2.h"
-//};
-//
-//#define FontByte(Index) pgm_read_byte (((PGM_P) font_8x6) + Index)
-//
 
 //*******************************************************************************
 //*                              Matrix specific code                           *
@@ -122,7 +105,6 @@ void ShiftSendByte (byte b) {
 
 //
 // Convert columns from internal representation to how HW is wired
-// TODO - this shall be done in display write routines, not in interrupt when sending the byte out
 //
 
 byte MbiConvertColumns (byte c) {
@@ -157,20 +139,12 @@ void MatrixSend (byte *Columns, byte Row) {
 }
 
 //*******************************************************************************
-//*                              Screen routines                                *
-//*******************************************************************************
-
-
-//*******************************************************************************
 //*                              Interrupt handler                              *
 //*******************************************************************************
-  
-void MatrixInterrupt (void) {
-  static byte Row = 0;
 
-  MatrixSend (&(MatrixBuffer [0][Row * SX]), Row);
-  Row = (Row + 1) & 0x07;
-}
+//
+// Interrupt handler is now part of the MatrixCode file
+//
     
 //*******************************************************************************
 //*                            Arduino setup method                             *
@@ -210,18 +184,22 @@ void setup() {
 //*                              Main program loop                              *
 //*******************************************************************************
 
-void loop() {
-  byte i;
+void loop () {
+  static int i = 1000;
+
+  //
+  // PutChar writes to inactive screen page. Clear it first, fill in the data and flip pages
+  //
   
-  for (i = 0; i < SX * SY; i++) {
-    MatrixBuffer [0][i] = 0xAA;
-  }
-  
-  delay (100);
-  
-  for (i = 0; i < SX * SY; i++) {
-    MatrixBuffer [0][i] = 0x55;
-  }
-  
-  delay (100);
+  memset (Screen [ScreenPageInactive()], 0, sizeof (Screen [0]));
+  PutChar (0, 0, (i / 1000) + '0');
+  PutChar (6, 0, (i % 1000) / 100 + '0');
+  PutChar (12, 0, (i % 100) / 10 + '0');
+  PutChar (18, 0, (i % 10) + '0');
+  Flags |= FLAGS_FADE_PAGE;
+  i++;
+  if (i > 9999) i = 0;
+  delay (100);  
+
 }
+
