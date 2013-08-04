@@ -9,6 +9,7 @@
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       28.7.2013 First release, just testing the HW
 //* Kubik       30.7.2013 Added screen code from 3matrix clock
+//* Kubik        4.8.2013 New font, time support, MBI5170 current adjust
 //*******************************************************************************
 
 //*******************************************************************************
@@ -38,7 +39,11 @@
 #define LE  11    // PB5
 #define LED 13
 
+#define MatrixClkHigh()        { PORTB |= (1 << 4); }
+#define MatrixClkLow()         { PORTB &= ~(1 << 4); }
 #define MatrixClkPulse()       { PORTB |= (1 << 4); PORTB &= ~(1 << 4); }
+#define MatrixStrobeHigh()     { PORTB |= (1 << 5); }
+#define MatrixStrobeLow()      { PORTB &= ~(1 << 5); }
 #define MatrixStrobePulse()    { PORTB |= (1 << 5); PORTB &= ~(1 << 5); }
 #define MatrixDataHigh()       { PORTH |= (1 << 6); }
 #define MatrixDataLow()        { PORTH &= ~(1 << 6); }
@@ -140,6 +145,104 @@ void MatrixSend (byte *Columns, byte Row) {
   MatrixStrobePulse ();
 }
 
+//
+// Send the current adjust code to MBI5170 chips
+//
+
+void  MatrixCurrentAdjust (byte CurrentAdjustCode) {
+  byte i;
+  
+  //
+  // Prepare CLK low
+  //
+  
+  MatrixClkLow ();
+  
+  //
+  // Follow the sequence in MBI5170 datasheet to enable CA mode
+  // Step 1
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 2
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeLow ();
+  MatrixClkPulse ();
+
+  //
+  // Step 3
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 4
+  //
+  
+  MatrixStrobeHigh ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 5
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Send CurrentAdjustCode to all four MBI5170 chips
+  //
+
+  for (i = 0; i < 4; i++) {
+    ShiftSendByte (CurrentAdjustCode);  
+  }
+  
+  MatrixStrobePulse ();
+  
+  //
+  // Switch back to normal mode 
+  // Step 1
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 2
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeLow ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 3, 4, 5
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  MatrixClkPulse ();
+  MatrixClkPulse ();
+  
+  //
+  // Enable OE again
+  //
+
+  MatrixOeLow ();
+}  
+
 //*******************************************************************************
 //*                              Interrupt handler                              *
 //*******************************************************************************
@@ -173,6 +276,8 @@ void setup() {
 
   memset (Screen, 0, sizeof (Screen));
 
+  MatrixCurrentAdjust (0x0);  // Just for test
+  
   //
   // Initialize timer and attach the matrix interrupt to it.
   // The interrupt will be called every 1ms
