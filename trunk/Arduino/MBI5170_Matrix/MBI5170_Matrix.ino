@@ -231,7 +231,7 @@ void loop () {
       PutChar (0, 0, hour () / 10);
     }
     PutChar (7, 0, (hour () % 10) + '0');
-    PutChar (14, 0, ':');
+    PutChar (15, 0, ':');
     PutChar (19, 0, minute () / 10 + '0');
     PutChar (26, 0, (minute () % 10) + '0');
     Flags |= FLAGS_FADE_PAGE;
