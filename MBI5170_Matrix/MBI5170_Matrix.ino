@@ -24,6 +24,7 @@
 //*******************************************************************************
 
 #include "TimerOne.h"
+#include <Time.h>
 
 //
 // Pins used to drive the matrix. Note that when you change these, you have to 
@@ -35,6 +36,7 @@
 #define SDI  9    // PH6
 #define OE  12    // PB6
 #define LE  11    // PB5
+#define LED 13
 
 #define MatrixClkPulse()       { PORTB |= (1 << 4); PORTB &= ~(1 << 4); }
 #define MatrixStrobePulse()    { PORTB |= (1 << 5); PORTB &= ~(1 << 5); }
@@ -169,6 +171,8 @@ void setup() {
 
   digitalWrite (OE, LOW);
 
+  memset (Screen, 0, sizeof (Screen));
+
   //
   // Initialize timer and attach the matrix interrupt to it.
   // The interrupt will be called every 1ms
@@ -178,6 +182,7 @@ void setup() {
   Timer1.initialize (1000);
   Timer1.attachInterrupt (MatrixInterrupt);
   
+  setTime (0, 0, 0, 1, 1, 2013);    // Dummy time until the time gets synced
 }
 
 //*******************************************************************************
@@ -185,21 +190,51 @@ void setup() {
 //*******************************************************************************
 
 void loop () {
-  static int i = 1000;
+  time_t Time;
+  static time_t PreviousTime = 0;
+  unsigned long Millis;
+  static unsigned long LastMillis = 0;
 
   //
-  // PutChar writes to inactive screen page. Clear it first, fill in the data and flip pages
+  // Any code that needs to be executed on every loop should go here
   //
   
-  memset (Screen [ScreenPageInactive()], 0, sizeof (Screen [0]));
-  PutChar (0, 0, (i / 1000) + '0');
-  PutChar (6, 0, (i % 1000) / 100 + '0');
-  PutChar (12, 0, (i % 100) / 10 + '0');
-  PutChar (18, 0, (i % 10) + '0');
-  Flags |= FLAGS_FADE_PAGE;
-  i++;
-  if (i > 9999) i = 0;
-  delay (100);  
+  //
+  // Every time the Millis changes, execute the code below.
+  // In other words, all the code that follows is executed every millisecond or less frequently
+  //
 
+  Millis = millis();
+  if (Millis != LastMillis) {
+    LastMillis = Millis;
+  } else {
+    return;
+  }
+
+  //
+  // Every time the time changes, display the new time on the screen
+  // We're only displaying hours and minutes, but the code is called for every 
+  //
+
+  Time = now ();
+  if (Time != PreviousTime) {
+    PreviousTime = Time;
+    
+    digitalWrite (LED, second () & 0x01 ? HIGH : LOW);
+
+    //
+    // PutChar writes to inactive screen page. Clear it first, fill in the data and flip pages
+    //
+    
+    memset (Screen [ScreenPageInactive()], 0, sizeof (Screen [0]));
+    if (hour () > 9) {
+      PutChar (0, 0, hour () / 10);
+    }
+    PutChar (7, 0, (hour () % 10) + '0');
+    PutChar (14, 0, ':');
+    PutChar (19, 0, minute () / 10 + '0');
+    PutChar (26, 0, (minute () % 10) + '0');
+    Flags |= FLAGS_FADE_PAGE;
+  }
 }
 
