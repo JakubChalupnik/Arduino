@@ -197,5 +197,5 @@ extern const byte Font8x6[] PROGMEM;
 
 void PutChar(signed char x, signed char y, byte c) {
 
-    PutBitmap(x, y, 6, 8, (PGM_P) (Font8x6 + 8 * (c - ' ')));
+    PutBitmap(x, y, 6, 8, (PGM_P) (Font8x6 + 8 * (c - '0')));
 }
