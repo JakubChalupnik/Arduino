@@ -22,7 +22,10 @@
 //*                           Includes and defines                              *
 //*******************************************************************************
 
-#include "Time.h"
+#include <Time.h>  
+#include <Wire.h>  
+#include <DS1307RTC.h>
+#include <OneWire.h>
 
 //
 // Pins used to drive the segment chain.
@@ -49,6 +52,13 @@ const bool ShiftPWM_balanceLoad = true;
 //*******************************************************************************
 //*                               Static variables                              *
 //*******************************************************************************
+
+OneWire  Ds (2);
+byte TempSensorAddr [8];
+byte TempSensorType;
+byte TempSensorData [12];
+byte TempSensorPresent;
+int Temperature;
 
 //*******************************************************************************
 //*                               Segment functions                             *
@@ -136,11 +146,159 @@ void SegmentSetDisplay (byte Hour, byte Minute, int Temperature, byte Brightness
 }
   
 //*******************************************************************************
+//*                               DS1820 support                                *
+//*******************************************************************************
+
+typedef enum {
+  S_IDLE, S_WAIT, S_READ, S_COMP
+} state_t;
+
+void Ds1307Init (void) {
+  byte i;
+  
+  if (!Ds.search (TempSensorAddr)) {
+    Serial.println ("No more addresses.");
+    Ds.reset_search ();
+    TempSensorPresent = 0;
+    return;
+  } else {
+    TempSensorPresent = 1;
+    Serial.print("ROM =");
+    for (i = 0; i < 8; i++) {
+      Serial.write (' ');
+      Serial.print (TempSensorAddr [i], HEX);
+    }
+    Serial.println ();
+  }
+  
+
+  if (OneWire::crc8(TempSensorAddr, 7) != TempSensorAddr [7]) {
+    Serial.println ("CRC is not valid!");
+    return;
+  }
+ 
+  // the first ROM byte indicates which chip
+  switch (TempSensorAddr [0]) {
+    case 0x10:
+      Serial.println("  Chip = DS18S20");  // or old DS1820
+      TempSensorType = 1;
+      break;
+    case 0x28:
+      Serial.println("  Chip = DS18B20");
+      TempSensorType = 0;
+      break;
+    case 0x22:
+      Serial.println("  Chip = DS1822");
+      TempSensorType = 0;
+      break;
+    default:
+      Serial.println("Device is not a DS18x20 family device.");
+      break;
+  } 
+}  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void TempSensorPoll (void) {
+  byte i;
+  byte present = 0;
+  unsigned int raw;
+  signed int sraw;
+  static state_t State = S_IDLE;
+  static uint32_t WaitTime;
+
+  switch (State) {
+  case S_IDLE:
+    Ds.reset ();
+    Ds.select (TempSensorAddr);
+    Ds.write (0x44, 1);         // start conversion, with parasite power on at the end
+    WaitTime = millis () + 1000;
+    State = S_WAIT;
+    break;
+
+  case S_WAIT:
+    if (millis () > WaitTime) {
+      State = S_READ;
+    }
+    break;
+
+  case S_READ:
+    present = Ds.reset();
+    Ds.select (TempSensorAddr);    
+    Ds.write (0xBE);         // Read Scratchpad
+    State = S_COMP;
+    break;
+
+  case S_COMP:  
+    for (i = 0; i < 9; i++) {           // we need 9 bytes
+      TempSensorData [i] = Ds.read();
+    }
+
+    // convert the data to actual temperature
+
+    raw = (TempSensorData [1] << 8) | TempSensorData [0];
+    if (TempSensorType) {
+      raw = raw << 3; // 9 bit resolution default
+      if (TempSensorData [7] == 0x10) {
+        // count remain gives full 12 bit resolution
+        raw = (raw & 0xFFF0) + 12 - TempSensorData [6];
+      }
+    } else {
+      byte cfg = (TempSensorData [4] & 0x60);
+      if (cfg == 0x00) raw = raw << 3;  // 9 bit resolution, 93.75 ms
+      else if (cfg == 0x20) raw = raw << 2; // 10 bit res, 187.5 ms
+      else if (cfg == 0x40) raw = raw << 1; // 11 bit res, 375 ms
+      // default is 12 bit resolution, 750 ms conversion time
+    }
+
+    Temperature = (raw + 8) >> 4;
+    
+//    sraw = raw;
+//      if (sraw < 0) {
+//        Serial.print("-");
+//        sraw = -raw;
+//      }
+//    
+//    if (1) {
+//      Serial.print("Temp ");
+//      Serial.print(raw, HEX);
+//      Serial.print(" ");
+//      sraw = raw;
+//      if (sraw < 0) {
+//        Serial.print("-");
+//        sraw = -raw;
+//      }
+//  
+//      Serial.print(sraw / 16);
+//      Serial.print(".");
+//      Serial.print(sraw & 0x000F);
+//      Serial.print("     ");
+//      Serial.println((sraw + 8) / 16);
+//    }
+//    
+//    Temperature = raw;
+    State = S_IDLE;
+    break;
+  }
+}
+
+//*******************************************************************************
 //*                            Arduino setup method                             *
 //*******************************************************************************
 
 void setup() {                
-  
   Serial.begin(115200);
 
   //
@@ -157,7 +315,9 @@ void setup() {
 
   ShiftPWM.SetAll (0);
 
-  setTime (0, 0, 0, 1, 1, 2013);    // Dummy time until the time gets synced 
+  setSyncProvider (RTC.get);
+
+  Ds1307Init ();
 }
 
 //*******************************************************************************
@@ -173,6 +333,8 @@ void loop () {
   //
   // Any code that needs to be executed on every loop should go here
   //
+
+  TempSensorPoll ();
   
   //
   // Every time the Millis changes, execute the code below.
@@ -195,7 +357,7 @@ void loop () {
   if (Time != PreviousTime) {
     PreviousTime = Time;
     
-    SegmentSetDisplay (hour (), minute (), -32, 63);
+    SegmentSetDisplay (hour (), minute (), Temperature, 63);
   }
 }
 
