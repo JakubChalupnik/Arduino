@@ -9,6 +9,7 @@
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       10.8.2013 First release, testing the HW
 //* Kubik       10.8.2013 Added time and display support
+//* Kubik       11.8.2013 Temperature support added
 //*******************************************************************************
 
 //*******************************************************************************
@@ -53,7 +54,7 @@ const bool ShiftPWM_balanceLoad = true;
 //*                               Static variables                              *
 //*******************************************************************************
 
-OneWire  Ds (2);
+OneWire Ds (2);
 byte TempSensorAddr [8];
 byte TempSensorType;
 byte TempSensorData [12];
@@ -170,7 +171,6 @@ void Ds1307Init (void) {
     }
     Serial.println ();
   }
-  
 
   if (OneWire::crc8(TempSensorAddr, 7) != TempSensorAddr [7]) {
     Serial.println ("CRC is not valid!");
@@ -197,19 +197,10 @@ void Ds1307Init (void) {
   } 
 }  
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+//
+// Poll the temperature. This should be called repeatedly, but the timing is not very critical.
+// Updates the global variable Temperature
+//
 
 void TempSensorPoll (void) {
   byte i;
