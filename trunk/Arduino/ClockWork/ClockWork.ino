@@ -46,7 +46,7 @@ const bool ShiftPWM_balanceLoad = true;
 // Here you set the number of brightness levels, the update frequency and the number of shift registers.
 //
 
-#define ShiftPwmMaxBrightness     127
+#define ShiftPwmMaxBrightness     63
 #define ShiftPwmFrequency         75
 #define ShiftPwmRegisters         7
 
@@ -130,20 +130,20 @@ void SegmentSetDisplay (byte Hour, byte Minute, int Temperature, byte Brightness
     Digit = SegHexTable [Temperature / 10];
   }
 
-  SegmentSetDigit (Digit, Brightness, 48);
+  SegmentSetDigit (Digit, Brightness / 2, 48);
 
   //
   // Second digit of temperature
   //
   
   Digit = SegHexTable [Temperature % 10];
-  SegmentSetDigit (Digit, Brightness, 40);
+  SegmentSetDigit (Digit, Brightness / 2, 40);
 
   //
   // Degree of Celsius sign
   //
   
-  SegmentSetDigit (0xE0, Brightness, 32);
+  SegmentSetDigit (0xE0, Brightness / 2, 32);
 }
   
 //*******************************************************************************
@@ -285,6 +285,160 @@ void TempSensorPoll (void) {
   }
 }
 
+
+
+//const int ShiftPWM_latchPin= 17;
+//const int ShiftPWM_dataPin = 11;
+//const int ShiftPWM_clockPin = 13;
+//const int ShiftPWM_oePin = 16;
+
+
+
+#define CLK 13
+#define SDI 11
+#define OE  16
+#define LE  17
+
+#define MatrixClkHigh()        { digitalWrite (CLK, HIGH); }
+#define MatrixClkLow()         { digitalWrite (CLK, LOW); }
+#define MatrixClkPulse()       { digitalWrite (CLK, HIGH); digitalWrite (CLK, LOW); }
+#define MatrixStrobeHigh()     { digitalWrite (LE, HIGH); }
+#define MatrixStrobeLow()      { digitalWrite (LE, LOW); }
+#define MatrixStrobePulse()    { digitalWrite (LE, HIGH); digitalWrite (LE, LOW); }
+#define MatrixDataHigh()       { digitalWrite (SDI, HIGH); }
+#define MatrixDataLow()        { digitalWrite (SDI, LOW); }
+#define MatrixOeHigh()         { digitalWrite (OE, HIGH); }
+#define MatrixOeLow()          { digitalWrite (OE, LOW); } 
+
+//
+// Send one byte to the chain of shift registers. No latching at all.
+//
+
+void ShiftSendByte (byte b) {
+  byte i;
+  
+  for (i = 0; i < 8; i++) {
+    if (b & 0x01) {
+      MatrixDataHigh ();
+    } else {
+      MatrixDataLow ();
+    }
+    MatrixClkPulse ();
+    b = b >> 1;
+  }
+} 
+
+//
+// Send the current adjust code to MBI5170 chips
+//
+
+void  MatrixCurrentAdjust (byte CurrentAdjustCode) {
+  byte i;
+  
+  //
+  // Prepare CLK low
+  //
+  
+  MatrixClkLow ();
+  
+  //
+  // Follow the sequence in MBI5170 datasheet to enable CA mode
+  // Step 1
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 2
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeLow ();
+  MatrixClkPulse ();
+
+  //
+  // Step 3
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 4
+  //
+  
+  MatrixStrobeHigh ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 5
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Send CurrentAdjustCode to all four MBI5170 chips
+  //
+
+//  for (i = 0; i < 7; i++) {
+//    ShiftSendByte (CurrentAdjustCode);  
+//  }
+  
+  ShiftSendByte (0xFF);  
+  ShiftSendByte (0xFF);  
+  ShiftSendByte (0xFF);  
+  ShiftSendByte (0xFF);  
+//  ShiftSendByte (0x00);  
+//  ShiftSendByte (0x00);  
+//  ShiftSendByte (0x00);  
+//  ShiftSendByte (0x00);  
+  ShiftSendByte (0x00);  
+  ShiftSendByte (0x00);  
+  ShiftSendByte (0x00);  
+  
+  MatrixStrobePulse ();
+  
+  //
+  // Switch back to normal mode 
+  // Step 1
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 2
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeLow ();
+  MatrixClkPulse ();
+  
+  //
+  // Step 3, 4, 5
+  //
+  
+  MatrixStrobeLow ();
+  MatrixOeHigh ();
+  MatrixClkPulse ();
+  MatrixClkPulse ();
+  MatrixClkPulse ();
+  
+  //
+  // Enable OE again
+  //
+
+  MatrixOeLow ();
+}   
+
+
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //*******************************************************************************
@@ -309,6 +463,8 @@ void setup() {
   setSyncProvider (RTC.get);
 
   Ds1307Init ();
+
+//  MatrixCurrentAdjust (0x0);  // Just for test 
 }
 
 //*******************************************************************************
@@ -349,6 +505,11 @@ void loop () {
     PreviousTime = Time;
     
     SegmentSetDisplay (hour (), minute (), Temperature, 63);
+    if (second () & 0x01) {
+      ShiftPWM.SetOne (15, 63);
+    } else {
+      ShiftPWM.SetOne (15, 0);
+    }
   }
 }
 
