@@ -3,13 +3,15 @@
 //* Arduino based Mina Clock
 //*
 //*******************************************************************************
-//* Processor:  Arduino Mega2560
+//* Processor:  Arduino Pro Mini
 //*
 //* Author      Date       Comment
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       28.7.2013 First release, just testing the HW
 //* Kubik       30.7.2013 Added screen code from 3matrix clock
 //* Kubik        4.8.2013 New font, time support, MBI5170 current adjust
+//* Kubik       17.8.2013 MBI5170 current adjust removed, change to Arduino Pro Mini
+//* Kubik       17.8.2013 Display turned upside down, code modified to support that
 //*******************************************************************************
 
 //*******************************************************************************
@@ -33,36 +35,36 @@
 // pin handling. The HW mapping differs between different flavours of Arduino!
 //
 
-#define CLK 10    // PB4
-#define SDI  9    // PH6
-#define OE  12    // PB6
-#define LE  11    // PB5
+#define CLK  8    // PB0
+#define SDI  9    // PB1
+#define OE   6    // PD6
+#define LE   7    // PD7
 #define LED 13
 
-#define MatrixClkHigh()        { PORTB |= (1 << 4); }
-#define MatrixClkLow()         { PORTB &= ~(1 << 4); }
-#define MatrixClkPulse()       { PORTB |= (1 << 4); PORTB &= ~(1 << 4); }
-#define MatrixStrobeHigh()     { PORTB |= (1 << 5); }
-#define MatrixStrobeLow()      { PORTB &= ~(1 << 5); }
-#define MatrixStrobePulse()    { PORTB |= (1 << 5); PORTB &= ~(1 << 5); }
-#define MatrixDataHigh()       { PORTH |= (1 << 6); }
-#define MatrixDataLow()        { PORTH &= ~(1 << 6); }
-#define MatrixOeHigh()         { PORTB |= (1 << 6); }
-#define MatrixOeLow()          { PORTB &= ~(1 << 6); }
+#define MatrixClkHigh()        { PORTB |= (1 << 0); }
+#define MatrixClkLow()         { PORTB &= ~(1 << 0); }
+#define MatrixClkPulse()       { PORTB |= (1 << 0); PORTB &= ~(1 << 0); }
+#define MatrixStrobeHigh()     { PORTD |= (1 << 7); }
+#define MatrixStrobeLow()      { PORTD &= ~(1 << 7); }
+#define MatrixStrobePulse()    { PORTD |= (1 << 7); PORTD &= ~(1 << 7); }
+#define MatrixDataHigh()       { PORTB |= (1 << 1); }
+#define MatrixDataLow()        { PORTB &= ~(1 << 1); }
+#define MatrixOeHigh()         { PORTD |= (1 << 6); }
+#define MatrixOeLow()          { PORTD &= ~(1 << 6); }
 
 //
 // How columns of the LED matrix correspond to bits in the byte/dword stored in screen buffer
 // e.g. column 4 corresponds to bit 7. 
 //
 
-#define C_MASK_4 0x80  
-#define C_MASK_2 0x40  
-#define C_MASK_1 0x20  
-#define C_MASK_7 0x10  
-#define C_MASK_6 0x08  
-#define C_MASK_0 0x04  
-#define C_MASK_5 0x02  
-#define C_MASK_3 0x01  
+#define C_MASK_7 0x04  
+#define C_MASK_6 0x20  
+#define C_MASK_5 0x40  
+#define C_MASK_4 0x01  
+#define C_MASK_3 0x80  
+#define C_MASK_2 0x02
+#define C_MASK_1 0x08  
+#define C_MASK_0 0x10  
 
 //
 // Screen related defines
@@ -116,7 +118,7 @@ void ShiftSendByte (byte b) {
 
 byte MbiConvertColumns (byte c) {
   byte Columns = 0;
-  
+
   if (c & 0x80) Columns |= C_MASK_0;
   if (c & 0x40) Columns |= C_MASK_1;
   if (c & 0x20) Columns |= C_MASK_2;
@@ -125,7 +127,7 @@ byte MbiConvertColumns (byte c) {
   if (c & 0x04) Columns |= C_MASK_5;
   if (c & 0x02) Columns |= C_MASK_6;
   if (c & 0x01) Columns |= C_MASK_7;
-  
+
   return Columns;
 }
 
@@ -137,10 +139,11 @@ byte MbiConvertColumns (byte c) {
 void MatrixSend (byte *Columns, byte Row) {
   byte i;
   
-  ShiftSendByte (~(1 << (Row & 0x07)));
+  ShiftSendByte (~(1 << ((7 - Row) & 0x07)));
   
+  Columns = Columns + 3;
   for (i = 0; i < SX; i++) {
-    ShiftSendByte (MbiConvertColumns (*Columns++));
+    ShiftSendByte (MbiConvertColumns (*Columns--));
   }
   MatrixStrobePulse ();
 }
@@ -187,7 +190,7 @@ void setup() {
   Timer1.initialize (1000);
   Timer1.attachInterrupt (MatrixInterrupt);
   
-  setTime (0, 0, 0, 1, 1, 2013);    // Dummy time until the time gets synced
+  setTime (12, 34, 0, 1, 1, 2013);    // Dummy time until the time gets synced
 }
 
 //*******************************************************************************
@@ -232,8 +235,9 @@ void loop () {
     //
     
     memset (Screen [ScreenPageInactive()], 0, sizeof (Screen [0]));
+
     if (hour () > 9) {
-      PutChar (0, 0, hour () / 10);
+      PutChar (0, 0, (hour () / 10) + '0');
     }
     PutChar (7, 0, (hour () % 10) + '0');
     PutChar (15, 0, ':');
