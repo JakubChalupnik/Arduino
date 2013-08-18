@@ -34,3 +34,8 @@ unsigned char SegHexTable [] = {
     SegMac(0, 0, 0, 0, 0, 0, 1, 0),             // Dash
 };
 
+#define SEVEN_DASH     SegHexTable [0x12]
+#define SEVEN_DEGREE   SegHexTable [0x11] 
+#define SEVEN_BLANK    SegHexTable [0x10]
+#define SEVEN_C        SegHexTable [0x0C]
+
