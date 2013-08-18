@@ -13,6 +13,7 @@
 //* Kubik       17.8.2013 MBI5170 current adjust removed, change to Arduino Pro Mini
 //* Kubik       17.8.2013 Display turned upside down, code modified to support that
 //* Kubik       18.8.2013 Segment display support added
+//* Kubik       18.8.2013 RFM12 support, packet decoding
 //*******************************************************************************
 
 //*******************************************************************************
@@ -29,7 +30,12 @@
 
 #include "TimerOne.h"
 #include <Time.h>
-extern unsigned char SegHexTable [];
+#include <JeeLib.h>
+#include <PacketDefine.h> 
+
+#include "LedSeg.h"
+
+#define DEBUG_RMF12 0
 
 //
 // Pins used to drive the matrix. Note that when you change these, you have to 
@@ -94,6 +100,8 @@ volatile byte Flags;
 #define ScreenPageDisplayed()   (Flags & FLAGS_PAGE_DISPLAYED)
 #define ScreenPageInactive()    (~Flags & FLAGS_PAGE_DISPLAYED)
 
+int InnerTemperature;
+int OuterTemperature; 
 
 //*******************************************************************************
 //*                              Matrix specific code                           *
@@ -178,13 +186,86 @@ void SegmentSend (byte Segments, byte Digit) {
 //
 // Interrupt handler is now part of the MatrixCode file
 //
+
+//*******************************************************************************
+//*                            RFM12 packet functions                           *
+//*******************************************************************************
+
+//----------------------------------------------------------------------------
+//
+// PacketDecode processes the packet received from RFM12 and updates the time and external temperature accordingly
+//
+
+void PacketDecode () {
+  char c[4];
+  TimePayload_t *Time;
+  TemperaturePayload_t *Temp;
+
+  switch (*rf12_data) {
     
+    case RF12_PACKET_TIME:
+      Time = (TimePayload_t *) rf12_data;
+      setTime (Time->hour, Time->minute, 0, Time->day, Time->month, 2000 + Time->year);
+
+#if DEBUG_RMF12
+      Serial.print (F("Time packet: "));
+      Serial.print (Time->day);
+      Serial.print ('.');
+      Serial.print (Time->month);
+      Serial.print (' ');
+      Serial.print (2000 + Time->year);
+      Serial.print (' ');
+      Serial.print (Time->hour);
+      Serial.print (':');
+      Serial.println (Time->minute);
+#endif // DEBUG_RMF12
+
+      break;
+
+    case RF12_PACKET_TEMPERATURE:
+      Temp = (TemperaturePayload_t *) rf12_data;
+      InnerTemperature = Temp->temp1;
+      OuterTemperature = Temp->temp2;
+
+#if DEBUG_RMF12
+      Serial.print (F("Temperature packet: "));
+      Serial.print (InnerTemperature);
+      Serial.print (' ');
+      Serial.println (OuterTemperature);
+#endif //DEBUG_RMF12
+
+      break;
+
+    default:
+
+#if DEBUG_RMF12
+      uint8_t Rf12Len;
+      volatile uint8_t *Rf12Data;
+      Rf12Len = rf12_len;
+      Rf12Data = rf12_data;
+      Serial.print (F("Unknown packet: "));
+      while (Rf12Len > 0) {
+        sprintf (c, "%02X ", *Rf12Data);
+        Serial.print (c);
+        Rf12Len--;
+        Rf12Data++;
+      }
+      Serial.println ();
+#endif // DEBUG_RMF12
+
+      break;
+  }
+}
+     
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //*******************************************************************************
 
 void setup() {                
   
+  Serial.begin(57600);
+  Serial.println("\n[Mina Clock]\n");
+
   //
   // Initialize the pins used for commmunicating with the matrix
   // We're using Arduino methods here, this is not time critical
@@ -207,6 +288,8 @@ void setup() {
   memset (Screen, 0, sizeof (Screen));
   memset (Segments, 0, sizeof (Segments));
 
+  rf12_initialize(RF12_NET_NODE, RF12_868MHZ, RF12_NET_GROUP); 
+
   //
   // Initialize timer and attach the matrix interrupt to it.
   // The interrupt will be called every 1ms
@@ -216,7 +299,7 @@ void setup() {
   Timer1.initialize (1000);
   Timer1.attachInterrupt (MatrixInterrupt);
   
-  setTime (12, 34, 0, 1, 1, 2013);    // Dummy time until the time gets synced
+  setTime (0, 0, 0, 1, 1, 2013);    // Dummy time until the time gets synced
 }
 
 //*******************************************************************************
@@ -233,6 +316,14 @@ void loop () {
   // Any code that needs to be executed on every loop should go here
   //
   
+  //
+  // Check if any valid packet was received, and decode it
+  //
+  
+  if (rf12_recvDone() && rf12_crc == 0) {
+    PacketDecode ();
+  }
+ 
   //
   // Every time the Millis changes, execute the code below.
   // In other words, all the code that follows is executed every millisecond or less frequently
@@ -257,17 +348,15 @@ void loop () {
     digitalWrite (LED, second () & 0x01 ? HIGH : LOW);
 
     //
-    // PutChar writes to inactive screen page. Clear it first, fill in the data and flip pages
+    // PutChar writes to inactive screen page. Clear it first, fill in the data, update segment display and flip pages
     //
     
     memset (Screen [ScreenPageInactive()], 0, sizeof (Screen [0]));
-    Segments [ScreenPageInactive()][0] = SegHexTable [0x12];
-    Segments [ScreenPageInactive()][1] = SegHexTable [1];
-    Segments [ScreenPageInactive()][2] = SegHexTable [2];
-    Segments [ScreenPageInactive()][3] = SegHexTable [0x11];
-    Segments [ScreenPageInactive()][4] = SegHexTable [0x0C];
-    Segments [ScreenPageInactive()][5] = 0;
 
+    // 
+    // Display time on the matrix display
+    //
+    
     if (hour () > 9) {
       PutChar (0, 0, (hour () / 10) + '0');
     }
@@ -275,6 +364,44 @@ void loop () {
     PutChar (15, 0, ':');
     PutChar (19, 0, minute () / 10 + '0');
     PutChar (26, 0, (minute () % 10) + '0');
+    
+    //
+    // Display outer temperature on the segment display
+    //
+    
+    byte Temp;
+    
+    // 
+    // First digit is dash for negative temperatures, or blank
+    //
+    
+    if (OuterTemperature < 0) {
+      Segments [ScreenPageInactive()][0] = SEVEN_DASH;
+      Temp = (-OuterTemperature + 8) / 16;
+    } else {
+      Segments [ScreenPageInactive()][0] = SEVEN_BLANK;
+      Temp = (OuterTemperature + 8) / 16;
+    }
+   
+    //
+    // Second digit is tens of degrees
+    //
+    
+    if (Temp >= 10) {
+      Segments [ScreenPageInactive()][1] = SegHexTable [Temp / 10];
+    } else {
+      Segments [ScreenPageInactive()][2] = SEVEN_BLANK;
+    }
+    
+    //
+    // Rest is degrees and degrees of Celsius sign
+    //
+    
+    Segments [ScreenPageInactive()][2] = SegHexTable [Temp % 10];
+    Segments [ScreenPageInactive()][3] = SEVEN_DEGREE;
+    Segments [ScreenPageInactive()][4] = SEVEN_C;
+    Segments [ScreenPageInactive()][5] = SEVEN_BLANK;
+    
     Flags |= FLAGS_FADE_PAGE;
   }
 }
