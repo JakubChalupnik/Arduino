@@ -12,6 +12,7 @@
 //* Kubik        4.8.2013 New font, time support, MBI5170 current adjust
 //* Kubik       17.8.2013 MBI5170 current adjust removed, change to Arduino Pro Mini
 //* Kubik       17.8.2013 Display turned upside down, code modified to support that
+//* Kubik       18.8.2013 Segment display support added
 //*******************************************************************************
 
 //*******************************************************************************
@@ -28,6 +29,7 @@
 
 #include "TimerOne.h"
 #include <Time.h>
+extern unsigned char SegHexTable [];
 
 //
 // Pins used to drive the matrix. Note that when you change these, you have to 
@@ -39,6 +41,7 @@
 #define SDI  9    // PB1
 #define OE   6    // PD6
 #define LE   7    // PD7
+#define LES  5    // PD5
 #define LED 13
 
 #define MatrixClkHigh()        { PORTB |= (1 << 0); }
@@ -51,6 +54,7 @@
 #define MatrixDataLow()        { PORTB &= ~(1 << 1); }
 #define MatrixOeHigh()         { PORTD |= (1 << 6); }
 #define MatrixOeLow()          { PORTD &= ~(1 << 6); }
+#define SegmentStrobePulse()   { PORTD |= (1 << 5); PORTD &= ~(1 << 5); }
 
 //
 // How columns of the LED matrix correspond to bits in the byte/dword stored in screen buffer
@@ -79,6 +83,7 @@
 //*******************************************************************************
 
 byte Screen [2][SX * SY];
+byte Segments [2][6];
 volatile byte Flags;
 
 #define FLAGS_FADING            0x08    // Do not use - interrupt routine uses this
@@ -148,6 +153,24 @@ void MatrixSend (byte *Columns, byte Row) {
   MatrixStrobePulse ();
 }
 
+//
+// Send the data to segment shift register.
+// <Segments> goes to MBI5170 chips, <Digit> is converted from 0..5 to bitmask and goes to HC595
+//
+
+void SegmentSend (byte Segments, byte Digit) {
+  
+  if (Digit > 4) {
+    ShiftSendByte (0xFF);
+    ShiftSendByte (0);
+    SegmentStrobePulse ();
+  } else {
+    ShiftSendByte (~(1 << (Digit)));
+    ShiftSendByte (Segments);
+    SegmentStrobePulse ();
+  }
+}
+
 //*******************************************************************************
 //*                              Interrupt handler                              *
 //*******************************************************************************
@@ -169,6 +192,7 @@ void setup() {
   
   digitalWrite (CLK, LOW);
   digitalWrite (LE, LOW);
+  digitalWrite (LES, LOW);
   digitalWrite (SDI, LOW);
   digitalWrite (OE, HIGH);
   
@@ -176,10 +200,12 @@ void setup() {
   pinMode (SDI, OUTPUT);
   pinMode (OE, OUTPUT);
   pinMode (LE, OUTPUT);
+  pinMode (LES, OUTPUT);
 
   digitalWrite (OE, LOW);
 
   memset (Screen, 0, sizeof (Screen));
+  memset (Segments, 0, sizeof (Segments));
 
   //
   // Initialize timer and attach the matrix interrupt to it.
@@ -235,6 +261,12 @@ void loop () {
     //
     
     memset (Screen [ScreenPageInactive()], 0, sizeof (Screen [0]));
+    Segments [ScreenPageInactive()][0] = SegHexTable [0x12];
+    Segments [ScreenPageInactive()][1] = SegHexTable [1];
+    Segments [ScreenPageInactive()][2] = SegHexTable [2];
+    Segments [ScreenPageInactive()][3] = SegHexTable [0x11];
+    Segments [ScreenPageInactive()][4] = SegHexTable [0x0C];
+    Segments [ScreenPageInactive()][5] = 0;
 
     if (hour () > 9) {
       PutChar (0, 0, (hour () / 10) + '0');
