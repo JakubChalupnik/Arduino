@@ -17,7 +17,6 @@ void MatrixInterrupt (void) {
     byte *LineBufferPtr = LineBuffer;
     byte i;
 
-
     //
     // Initialize ActivePage. Point it to the current row on a page that's being displayed.
     //
@@ -38,6 +37,9 @@ void MatrixInterrupt (void) {
     }
 
     MatrixSend (LineBuffer, Row);
+    if (Row < 6) {
+      SegmentSend (Segments [ScreenPageDisplayed()][Row], Row);
+    }
     Row = (Row + 1) & 0x07;
 
     //
