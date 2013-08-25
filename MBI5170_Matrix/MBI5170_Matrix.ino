@@ -14,6 +14,7 @@
 //* Kubik       17.8.2013 Display turned upside down, code modified to support that
 //* Kubik       18.8.2013 Segment display support added
 //* Kubik       18.8.2013 RFM12 support, packet decoding
+//* Kubik       25.8.2013 Light intensity support added
 //*******************************************************************************
 
 //*******************************************************************************
@@ -22,6 +23,7 @@
 // Matrix display is driven by four MBI5170 chips linked into a chain. 
 // Next in the chain is HC595 driving PNP transistors selecting rows.
 // All chips share clock, latch and output enable.
+// Light sensor is on pin A0
 //
 
 //*******************************************************************************
@@ -49,6 +51,7 @@
 #define LE   7    // PD7
 #define LES  5    // PD5
 #define LED 13
+#define LIGHT_SENSOR A0
 
 #define MatrixClkHigh()        { PORTB |= (1 << 0); }
 #define MatrixClkLow()         { PORTB &= ~(1 << 0); }
@@ -102,6 +105,7 @@ volatile byte Flags;
 
 int InnerTemperature;
 int OuterTemperature; 
+byte Brightness = 0;      // Display brightness. 0 means fully on, the number can go pretty high for lower brightness
 
 //*******************************************************************************
 //*                              Matrix specific code                           *
@@ -224,8 +228,8 @@ void PacketDecode () {
 
     case RF12_PACKET_TEMPERATURE:
       Temp = (TemperaturePayload_t *) rf12_data;
-      InnerTemperature = Temp->temp1;
-      OuterTemperature = Temp->temp2;
+      InnerTemperature = Temp->temp2;
+      OuterTemperature = Temp->temp1;
 
 #if DEBUG_RMF12
       Serial.print (F("Temperature packet: "));
@@ -296,7 +300,7 @@ void setup() {
   // 4ms already causes flickering.
   //
   
-  Timer1.initialize (1000);
+  Timer1.initialize (100);
   Timer1.attachInterrupt (MatrixInterrupt);
   
   setTime (0, 0, 0, 1, 1, 2013);    // Dummy time until the time gets synced
@@ -305,6 +309,8 @@ void setup() {
 //*******************************************************************************
 //*                              Main program loop                              *
 //*******************************************************************************
+
+unsigned int LightIntensity = 0;
 
 void loop () {
   time_t Time;
@@ -335,6 +341,17 @@ void loop () {
   } else {
     return;
   }
+  
+  LightIntensity = (LightIntensity * 31 + analogRead (LIGHT_SENSOR)) / 32;
+  if (LightIntensity > 950) {          // Really dark
+    Brightness = 200;
+  } else if (LightIntensity > 700) {   // Ambient light
+    Brightness = 20;
+  } else if (LightIntensity > 100) {   // Decent light
+    Brightness = 10;
+  } else {
+    Brightness = 0;
+  }
 
   //
   // Every time the time changes, display the new time on the screen
@@ -346,6 +363,11 @@ void loop () {
     PreviousTime = Time;
     
     digitalWrite (LED, second () & 0x01 ? HIGH : LOW);
+    
+    Serial.print (LightIntensity);
+    Serial.print (" : ");
+    Serial.print (Brightness);
+    Serial.println ();
 
     //
     // PutChar writes to inactive screen page. Clear it first, fill in the data, update segment display and flip pages
