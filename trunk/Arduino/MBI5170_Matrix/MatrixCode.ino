@@ -17,6 +17,14 @@ void MatrixInterrupt (void) {
     byte *LineBufferPtr = LineBuffer;
     byte i;
 
+    if(Pwm_Counter > 0) {
+        digitalWrite (OE, HIGH);
+        Pwm_Counter--;
+        return;
+    } else {
+        digitalWrite (OE, LOW);
+    }
+
     //
     // Initialize ActivePage. Point it to the current row on a page that's being displayed.
     //
@@ -74,12 +82,10 @@ void MatrixInterrupt (void) {
     // thus emulating PWM dimming of the display.
     //
 
-//     if(Row == 0) {
-//         Pwm_Counter = (31 - LightIntensity) << 3;
-//     }
-
+     if(Row == 0) {
+         Pwm_Counter = Brightness;
+     }
 }
-
 
 //
 // Puts bitmap line located at address BitmapLine to screen line ScreenLine starting from offset StartBit.
