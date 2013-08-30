@@ -10,6 +10,7 @@
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       30.8.2013 First release, testing the HW
 //* Kubik       30.8.2013 Ethernet support added (ENC26J80)
+//* Kubik       30.8.2013 Time support added
 //*******************************************************************************
 
 //*******************************************************************************
@@ -33,8 +34,39 @@
 #include <avr/pgmspace.h>
 #include <ht1632c.h>
 #include <EtherCard.h>
+#include <Time.h>
+
+#define ETHERNET_BUFFER_SIZE 550
+#define TIME_UPDATE_PERIOD 30
+
+//
+// Debug options
+//
+
+#define DEBUG_ETHERNET 0
+
+//
+// Flags 
+//
 
 #define F_ETH_OK  0x01
+#define F_TIME_UPDATED 0x02
+
+//
+// Ethernet related defines
+//
+
+#define EthernetLedOn()
+#define EthernetLedOff()
+
+#if DEBUG_ETHERNET
+  #define DebugEthernet(...) Serial.print(__VA_ARGS__)
+  #define DebugEthernetln(...) Serial.println(__VA_ARGS__)
+#else
+  #define DebugEthernet(...)
+  #define DebugEthernetln(...)
+#endif
+
 
 //*******************************************************************************
 //*                               Static variables                              *
@@ -43,7 +75,7 @@
 ht1632c Display = ht1632c (&PORTD, 7, 6, 5, 4, GEOM_32x16, 2);
 static byte mymac[] = {                     // ethernet mac address - must be unique on your network
   0x74,0x69,0x69,0x2D,0x30,0x32 };   
-byte Ethernet::buffer[500];                 // tcp/ip send and receive buffer
+byte Ethernet::buffer[ETHERNET_BUFFER_SIZE];  // tcp/ip send and receive buffer
 
 volatile byte Flags = 0;
 
@@ -51,21 +83,16 @@ volatile byte Flags = 0;
 //*                               HTTP page code                                *
 //*******************************************************************************
 
-char page[] PROGMEM =
-"HTTP/1.0 503 Service Unavailable\r\n"
-"Content-Type: text/html\r\n"
-"Retry-After: 600\r\n"
-"\r\n"
+char PageHeader [] PROGMEM =
 "<html>"
   "<head><title>"
-    "Service Temporarily Unavailable"
+    "Arduino HT-CLK"
   "</title></head>"
   "<body>"
-    "<h3>This service is currently unavailable</h3>"
-    "<p><em>"
-      "The main server is currently off-line.<br />"
-      "Please try again later."
-    "</em></p>"
+    "<h3>Arduino HT-CLK</h3>"
+;
+
+char PageFooter [] PROGMEM =
   "</body>"
 "</html>"
 ;
@@ -80,6 +107,26 @@ void DisplayPrint (char *s, byte x, byte y, byte Step, byte Color) {
     Display.putchar (x,  y, *s++, Color);
     x += Step;
   }
+}
+
+void DisplayTime (byte Color = RED) {
+  
+  if (timeStatus () == timeNotSet) {
+    Display.setfont(FONT_7x13);
+    Display.putchar(1,  -2, '-', Color);
+    Display.putchar(8,  -2, '-', Color);
+    Display.putchar(18,  -2, '-', Color);
+    Display.putchar(25,  -2, '-', Color);
+  } else {
+    Display.setfont(FONT_5x7W);
+    Display.putchar(14,  1, ':', Color);
+    Display.setfont(FONT_7x13);
+    if (hour () > 9) Display.putchar(1,  -2, hour () / 10 + '0', Color);
+    Display.putchar(8,  -2, hour () % 10 + '0', Color);
+    Display.putchar(18,  -2, minute () / 10 + '0', Color);
+    Display.putchar(25,  -2, minute () % 10 + '0', Color);    
+  }
+  Display.sendframe ();
 }
 
 //*******************************************************************************
@@ -112,6 +159,9 @@ void setup () {
     DisplayPrint ("DHCPfail", 0, 10, 4, RED);
   }
   Display.sendframe ();
+
+  DnsLookup ();
+  Display.clear ();
 }
 
 //*******************************************************************************
@@ -119,11 +169,26 @@ void setup () {
 //******************************************************************************* 
 
 void loop () {
+  static byte LastSecond = 61;       // Remember last value of second() to toss tle flag up when it changes
 
   if (ether.packetLoop (ether.packetReceive ())) {   // wait for an incoming TCP packet, but ignore its contents
-    memcpy_P(ether.tcpOffset(), page, sizeof page);
-    ether.httpServerReply(sizeof page - 1);
+    memcpy_P(ether.tcpOffset(), PageHeader, sizeof (PageHeader));
+    memcpy_P(ether.tcpOffset() + sizeof (PageHeader), PageFooter, sizeof (PageFooter));
+    ether.httpServerReply(sizeof (PageHeader) + sizeof (PageFooter) - 1);
   }
 
+  UpdateTimeNtp ();                         // Process NTP time sync now and then
+
+  //
+  // Did the second just change? If not, leave, and don't execute the rest
+  //
+
+  if (LastSecond != second ()) {
+    LastSecond = second ();
+  } else {
+    return;
+  }
+
+  DisplayTime ();
 }
 
