@@ -113,6 +113,19 @@ const unsigned long int PROGMEM SegmentTable [] = {
   SEGMENT_H | SEGMENT_J | SEGMENT_M | SEGMENT_K,                       // X
   SEGMENT_H | SEGMENT_J | SEGMENT_L,                             // Y
   SEGMENT_A | SEGMENT_D | SEGMENT_J | SEGMENT_D,                       // Z
+  // --- numerals
+  SEGMENT_A | SEGMENT_B | SEGMENT_C | SEGMENT_D | SEGMENT_E | SEGMENT_F | SEGMENT_J | SEGMENT_M,
+  SEGMENT_J | SEGMENT_B | SEGMENT_C,
+  SEGMENT_A | SEGMENT_B | SEGMENT_D | SEGMENT_E | SEGMENT_G,
+  SEGMENT_A | SEGMENT_B | SEGMENT_C | SEGMENT_D | SEGMENT_G,
+  SEGMENT_B | SEGMENT_C | SEGMENT_F | SEGMENT_G,
+  SEGMENT_A | SEGMENT_C | SEGMENT_D | SEGMENT_F | SEGMENT_G,
+  SEGMENT_A | SEGMENT_C | SEGMENT_D | SEGMENT_E | SEGMENT_F | SEGMENT_G,
+  SEGMENT_A | SEGMENT_B | SEGMENT_C,
+  SEGMENT_A | SEGMENT_B | SEGMENT_C | SEGMENT_D | SEGMENT_E | SEGMENT_F | SEGMENT_G,
+  SEGMENT_A | SEGMENT_B | SEGMENT_C | SEGMENT_D | SEGMENT_F | SEGMENT_G,
+  // --- symbols
+  SEGMENT_G, 
 };
 
 const unsigned long int PROGMEM DigitTable[] = {
@@ -176,6 +189,31 @@ void VfdRefresh (void) {
 }   
 
 //
+// VfdCharConvert takes ASCII character and converts it into internal representation (index into SegmentTable)
+//
+
+byte VfdCharConvert (char c) {
+  
+  if ((c >= 'a') && (c <= 'z')) {  
+    return c + 1 - 'a';
+  }
+  
+  if ((c >= 'A') && (c <= 'Z')) {
+    return c + 1 - 'A';
+  }
+
+  if ((c >= '0') && (c <= '9')) {
+    return c + 27 - '0';
+  }
+  
+  if (c == ':') {
+    return 37;
+  }
+  
+  return 0;
+}
+
+//
 // VfdDisplay displays (puts into Screen buffer) the string, up to 16 characters
 //
 
@@ -184,11 +222,27 @@ void VfdDisplay (char *String) {
 
   memset (Screen, 0, sizeof (Screen));  
   while ((i < 16) && (*String != '\0')) {
-    Screen [i] = pgm_read_dword_near (SegmentTable + *String + 1 - 'A');
+    Screen [i] = pgm_read_dword_near (SegmentTable + VfdCharConvert (*String));
     Screen [i] |= pgm_read_dword_near (DigitTable + i);
     i++;
     String++;
   }
+}
+
+//
+// VfdDot displays dot after specified digit
+//
+
+void VfdDot (byte d) {
+  Screen [d] |= SEGMENT_dt;
+}
+
+//
+// VfdComma displays comma after specified digit
+//
+
+void VfdComma (byte d) {
+  Screen [d] |= SEGMENT_cm;
 }
 
 //*******************************************************************************
@@ -207,8 +261,10 @@ void setup() {
 
   pinMode(PinBlank, OUTPUT);
   digitalWrite (PinBlank, LOW);
+
+  setTime (0, 0, 0, 1, 1, 2013);
   
-  VfdDisplay ("ABCDEFGHIJKLMNOP");  
+//  VfdDisplay ("ABCDEFGHIJKLMNOP");  
 }
 
 //*******************************************************************************
@@ -218,7 +274,10 @@ void setup() {
 void loop() {
   unsigned long Millis;
   static unsigned long LastMillis = 0;
-
+  time_t Time; 
+  static time_t PreviousTime = 0; 
+  static char str [16];
+  
   //
   // Skip the rest if the mills () did not change.
   //
@@ -227,7 +286,21 @@ void loop() {
   if (Millis == LastMillis) {
     return;
   }
-  
   LastMillis = Millis;
+
   VfdRefresh ();
+  
+  //
+  // Skip the rest if the time did not change - in other words, execute every second only.
+  //
+
+  Time = now ();
+  if (Time == PreviousTime) {
+    return;
+  }
+  PreviousTime = Time;   
+
+  sprintf (str, "%2d:%2.2d:%2.2d %2d%-2d   ", hour (), minute (), second (), day (), month ());
+  VfdDisplay (str);  
+  VfdDot (10);
 }
