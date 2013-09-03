@@ -1,3 +1,36 @@
+//*******************************************************************************
+//*
+//* Arduino based central unit (Ethernet, RFM12B, HBUS)
+//*
+//*******************************************************************************
+//* Processor:  Arduino Mighty 1284p
+//* Author      Date       Comment
+//*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//* Kubik       (Older versions not commented or SVN'ed)
+//* Kubik        3.9.2013  Added standard headers, code cleanup
+//*******************************************************************************
+
+//*******************************************************************************
+//*                            HW details                                       *
+//*******************************************************************************
+// Microchip ENC26J80 for Ethernet (Jeelab Ethercard library, home made module)
+// HopeRF RFM12b on 868MHz (JeeLib library)
+// RS-485 driver for HBUS using UART1 (lame rip of old HBUS support for PIC)
+// Nokia LCD (eBay, Adafruit library)
+// Used pins:
+//  OneWire 	    27
+//  Nokia LCD	    18, 19, 20, 22, 21 + 15 (b/l)
+//  ShiftPWM	    24 26 25
+//  Rs485Direction  23
+//  RFM12	    2 (IRQ) 31 (CS)
+//  Ethernet	    4 (CS)
+//  SPI		    5 6 7
+//  UART1	    8 9
+//  UART2	    10 11
+
+//*******************************************************************************
+//*                           Includes and defines                              *
+//******************************************************************************* 
 #include <OneWire.h>
 #include <Time.h>
 
@@ -11,11 +44,17 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_PCD8544.h>
 
+#define HBUS_LINE 0
+#define TEMP_LINE 2
+#define RFM12B_REC_LINE 4
+#define LIGHT_LINE 1
+#define TIME_LINE 3
+
 //
 // Debug options
 //
 
-#define DEBUG_OW_TEMP 1
+#define DEBUG_OW_TEMP 0
 #define DEBUG_ETHERNET 0
 
 //
@@ -24,6 +63,7 @@
 
 #define OW_PIN_INT 27
 OneWire OneWireInternal(OW_PIN_INT);
+
 #if DEBUG_OW_TEMP
   #define DebugOwTemp(...) Serial.print(__VA_ARGS__)
   #define DebugOwTempln(...) Serial.println(__VA_ARGS__)
@@ -32,6 +72,19 @@ OneWire OneWireInternal(OW_PIN_INT);
   #define DebugOwTempln(...)
 #endif
 
+#if DEBUG_ETHERNET
+  #define DebugEthernet(...) Serial.print(__VA_ARGS__)
+  #define DebugEthernetln(...) Serial.println(__VA_ARGS__)
+#else
+  #define DebugEthernet(...)
+  #define DebugEthernetln(...)
+#endif
+
+
+//*******************************************************************************
+//*                               Static variables                              *
+//*******************************************************************************
+ 
 //
 // Nokia display variables
 //
@@ -53,14 +106,6 @@ static uint8_t mynetmask[4] = { 0,0,0,0 };
 static uint8_t gwip[4] = { 0,0,0,0 };
 static uint8_t dnsip[4] = { 0,0,0,0 };
 static uint8_t dhcpsvrip[4] = { 0,0,0,0 };
-
-#if DEBUG_ETHERNET
-  #define DebugEthernet(...) Serial.print(__VA_ARGS__)
-  #define DebugEthernetln(...) Serial.println(__VA_ARGS__)
-#else
-  #define DebugEthernet(...)
-  #define DebugEthernetln(...)
-#endif
 
 // Packet buffer, must be big enough to packet and payload
 byte Ethernet::buffer[ETHERNET_BUFFER_SIZE];
@@ -90,11 +135,6 @@ int numRegisters = 1;
 int numOutputs = numRegisters*8;
 int numRGBLeds = numRegisters*8/3;
 int fadingMode = 0; //start with all LED's off.
-
-//#define LED_l 7
-//#define LED_2 6
-//#define LED_3 5
-//#define LED_4 4
 
 #define LED_ETHERNET  7
 #define LED_HEART     6
@@ -130,9 +170,9 @@ byte Flags = 0;
 #define F_TIME_CHANGED 0x02
 TimePayload_t TimePayload;
 
-//================================================
-// Packet decode
-//
+//*******************************************************************************
+//*                               Packet decode                                 *
+//*******************************************************************************
 
 void PacketDecode () {
   TemperaturePayload_t *Temp;
@@ -158,9 +198,9 @@ void PacketDecode () {
   }
 }
 
-//================================================
-// 7 segment support (for HBUS devices)
-//
+//*******************************************************************************
+//*                 7 segment support (for HBUS devices)                        *
+//*******************************************************************************
 
 const unsigned char SegmentCharactersTable [] PROGMEM = {
 //  ABCDEFG
@@ -208,9 +248,9 @@ void SegConvertTemp (int Temp, byte *OutBuff) {
   }
 }
 
-//================================================
-// Tasks
-//
+//*******************************************************************************
+//*                                  Tasks                                      *
+//*******************************************************************************
 
 //
 // Time task.
@@ -227,8 +267,8 @@ byte TimeTask (void) {
   t = now ();
   if (LastTime != t) {
     LastTime = t;
-    display.fillRect (0, 16, 84, 8, WHITE);
-    display.setCursor(0, 16);
+    display.fillRect (0, TIME_LINE * 8, 84, 8, WHITE);
+    display.setCursor(0, TIME_LINE * 8);
     display.print(hour (t));
     display.print(":");
     display.print(minute (t));
@@ -255,30 +295,9 @@ byte TimeTask (void) {
 byte HbusTask (void) {
   static uint16_t counter = 0;
 
-  if (Flags & F_TIME_CHANGED) {
-    if ((second () == 0) && ((minute () % 5) == 0) && (timeStatus() == timeSet)) {
-      send_buff[0] = MSG_BROADCAST;
-      send_buff[1] = MSG_SET_CLOCK;
-      send_buff[2] = month ();
-      send_buff[3] = day ();
-      send_buff[4] = hour ();
-      send_buff[5] = minute ();
-      send_buff[6] = 0;
-      send_message(7);
-//      send_buff[0] = MSG_BROADCAST;
-//      send_buff[1] = MSG_SET_7SEG;
-//      send_buff[2] = (byte) ~ 0xEE;
-//      send_buff[3] = (byte) ~ 0x2E;
-//      send_buff[4] = (byte) ~ 0x3A;
-//      send_buff[5] = (byte) ~ 0x78;
-//      send_buff[6] = 10;             // 1.0 seconds
-//      send_message(7);
-      display.fillRect (0, 0, 84, 8, WHITE);
-      display.setCursor(0,0);
-      display.print("HBUS time #");
-      display.print(counter++);
-      return 1;
-    }
+  //
+  // Experimental code, blinks all LEDs on the HBUS target
+  //
 
 #ifdef HBUS_SET_LEDS
     send_buff[0] = MSG_BROADCAST;
@@ -290,6 +309,27 @@ byte HbusTask (void) {
     }
     send_message(3);
 #endif
+
+  //
+  // Send the time every 5 minutes
+  //
+  
+  if (Flags & F_TIME_CHANGED) {
+    if ((second () == 0) && ((minute () % 5) == 0) && (timeStatus() == timeSet)) {
+      send_buff[0] = MSG_BROADCAST;
+      send_buff[1] = MSG_SET_CLOCK;
+      send_buff[2] = month ();
+      send_buff[3] = day ();
+      send_buff[4] = hour ();
+      send_buff[5] = minute ();
+      send_buff[6] = 0;
+      send_message(7);
+      display.fillRect (0, HBUS_LINE * 8, 84, 8, WHITE);
+      display.setCursor (0, HBUS_LINE * 8);
+      display.print ("HBUS: ");
+      display.print (counter++);
+      return 1;
+    }
   }
   return 0;
 }
@@ -302,13 +342,13 @@ byte HbusTask (void) {
 byte Rfm12Task (void) {
   static uint16_t counter = 0;
 
-  if (rf12_recvDone() && rf12_crc == 0) {
+  if (rf12_recvDone () && (rf12_crc == 0)) {
     ShiftPWM.SetOne (LED_RFM12, LED_ON);
     PacketDecode ();
-    display.fillRect (0, 8, 84, 8, WHITE);
-    display.setCursor(0, 8);
-    display.print("RFM12 #");
-    display.print(counter++);
+    display.fillRect (0, RFM12B_REC_LINE * 8, 84, 8, WHITE);
+    display.setCursor (0, RFM12B_REC_LINE * 8);
+    display.print ("RFM12 #");
+    display.print (counter++);
     ShiftPWM.SetOne (LED_RFM12, LED_OFF);
     return 1;
   } 
@@ -339,12 +379,12 @@ byte TemperatureTask (void) {
   if ((LastInTemp != InTemp) || (LastOutTemp != OutTemp)) {
     LastInTemp = InTemp;
     LastOutTemp = OutTemp;
-    display.fillRect (0, 24, 84, 8, WHITE);
-    display.setCursor(0, 24);
-    DisplayTemp(InTemp);
-    display.print("oC  ");
-    DisplayTemp(OutTemp);
-    display.print("oC");
+    display.fillRect (0, TEMP_LINE * 8, 84, 8, WHITE);
+    display.setCursor (0, TEMP_LINE * 8);
+    DisplayTemp (InTemp);
+    display.print ("oC  ");
+    DisplayTemp (OutTemp);
+    display.print ("oC");
     return 1;
   } 
   return 0;
@@ -361,10 +401,11 @@ byte LightIntensityTask (void) {
   
   LightIntensity = Average;
 //  return 0;
-  display.fillRect (0, 32, 84, 8, WHITE);
-  display.setCursor(0, 32);
-  display.print(Average);
-  display.print("     ");
+  display.fillRect (0, LIGHT_LINE * 8, 84, 8, WHITE);
+  display.setCursor (0, LIGHT_LINE * 8);
+  display.print ("Light: ");
+  display.print (Average);
+  display.print ("     ");
   return 1;
 }
 
@@ -374,8 +415,13 @@ byte LcdBacklightTask (void) {
   return 0;
 }
   
+
+//*******************************************************************************
+//*                         Temperature sensor support                          *
+//*******************************************************************************
+
 //
-// Temperature sensor variables
+// The temperature reading is using state machine to spread the process over multiple task calls.
 //
 
 typedef enum {
@@ -603,9 +649,9 @@ void OwInitTemp (void) {
   TempPayload.type = RF12_PACKET_TEMPERATURE;
 }
 
-//===============================================================================================
-// Main code - setup
-//
+//*******************************************************************************
+//*                            Arduino setup method                             *
+//******************************************************************************* 
 
 void setup () {
 
@@ -722,9 +768,9 @@ void setup () {
   ADCSRA |= PS_16;    // // choose a prescaler from above
 }
 
-//===============================================================================================
-// Main code - loop
-//
+//*******************************************************************************
+//*                              Main program loop                              *
+//******************************************************************************* 
 
 void loop() {
   byte LcdNeedsRedraw;
