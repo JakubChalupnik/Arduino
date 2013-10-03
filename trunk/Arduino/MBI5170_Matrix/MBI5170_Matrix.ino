@@ -364,10 +364,10 @@ void loop () {
     
     digitalWrite (LED, second () & 0x01 ? HIGH : LOW);
     
-    Serial.print (LightIntensity);
-    Serial.print (" : ");
-    Serial.print (Brightness);
-    Serial.println ();
+//    Serial.print (LightIntensity);
+//    Serial.print (" : ");
+//    Serial.print (Brightness);
+//    Serial.println ();
 
     //
     // PutChar writes to inactive screen page. Clear it first, fill in the data, update segment display and flip pages
@@ -412,7 +412,7 @@ void loop () {
     if (Temp >= 10) {
       Segments [ScreenPageInactive()][1] = SegHexTable [Temp / 10];
     } else {
-      Segments [ScreenPageInactive()][2] = SEVEN_BLANK;
+      Segments [ScreenPageInactive()][1] = SEVEN_BLANK;
     }
     
     //
