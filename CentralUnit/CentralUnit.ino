@@ -33,6 +33,7 @@
 //******************************************************************************* 
 #include <OneWire.h>
 #include <Time.h>
+#include <Timezone.h>    // https://github.com/JChristensen/Timezone  
 
 #include <EtherCard.h>
 #define TIME_UPDATE_PERIOD 30
@@ -169,6 +170,14 @@ byte Flags = 0;
 #define F_TIME_UPDATED 0x01
 #define F_TIME_CHANGED 0x02
 TimePayload_t TimePayload;
+
+//
+// Central European Time (Frankfurt, Paris)
+//
+
+TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120};     //Central European Summer Time
+TimeChangeRule CET = {"CET ", Last, Sun, Oct, 3, 60};       //Central European Standard Time
+Timezone CE(CEST, CET);  
 
 //*******************************************************************************
 //*                               Packet decode                                 *
