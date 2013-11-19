@@ -35,6 +35,7 @@
 #include <ht1632c.h>
 #include <EtherCard.h>
 #include <Time.h>
+#include <Timezone.h>    // https://github.com/JChristensen/Timezone 
 
 #define ETHERNET_BUFFER_SIZE 550
 #define TIME_UPDATE_PERIOD 30
@@ -78,6 +79,11 @@ static byte mymac[] = {                     // ethernet mac address - must be un
 byte Ethernet::buffer[ETHERNET_BUFFER_SIZE];  // tcp/ip send and receive buffer
 
 volatile byte Flags = 0;
+
+//Central European Time (Frankfurt, Paris)
+TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120};     //Central European Summer Time
+TimeChangeRule CET = {"CET ", Last, Sun, Oct, 3, 60};       //Central European Standard Time
+Timezone CE(CEST, CET); 
 
 //*******************************************************************************
 //*                               HTTP page code                                *
@@ -136,7 +142,7 @@ void DisplayTime (byte Color = RED) {
 void setup () {
 
   Serial.begin (57600);
-  Serial.println (F("[HTCLK]"));
+  Serial.println (F("[ClockHt1632]"));
   Display.clear ();
   Display.pwm (1);
 
