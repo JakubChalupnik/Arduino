@@ -60,8 +60,9 @@ void UpdateTimeNtp (void) {
 
       if (timeLong) {
         timeLong -= GETTIMEOFDAY_TO_NTP_OFFSET;
-        setTime (timeLong);
-        adjustTime(7200);
+        setTime(CE.toLocal(timeLong));
+//        setTime (timeLong);
+//        adjustTime(7200);
         Flags |= F_TIME_UPDATED;
       }
     }
