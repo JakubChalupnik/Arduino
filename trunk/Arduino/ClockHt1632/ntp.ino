@@ -14,8 +14,6 @@ prog_char *ntpList[] PROGMEM = { ntp0, ntp1, ntp2 };
 
 uint8_t clientPort = 123;
 
-
-
 // The next part is to deal with converting time received from NTP servers
 // to a value that can be displayed. This code was taken from somewhere that
 // I cant remember. Apologies for no acknowledgement.
@@ -61,8 +59,6 @@ void UpdateTimeNtp (void) {
       if (timeLong) {
         timeLong -= GETTIMEOFDAY_TO_NTP_OFFSET;
         setTime(CE.toLocal(timeLong));
-//        setTime (timeLong);
-//        adjustTime(7200);
         Flags |= F_TIME_UPDATED;
       }
     }
