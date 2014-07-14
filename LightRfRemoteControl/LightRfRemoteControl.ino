@@ -33,9 +33,9 @@ const byte SRCLK_Pin = 8; //pin 11 on the 75HC595
 //
 
 const byte ButtonAPin = 17;
-const byte ButtonBPin = 16;
-const byte ButtonCPin = 15;
-const byte ButtonDPin = 19;
+const byte ButtonBPin = 15;
+const byte ButtonCPin = 19;
+const byte ButtonDPin = 16;
 
 //
 // Define PWM pins
@@ -524,6 +524,14 @@ void loop() {
   
   if (BUTTON_B.risingEdge ()) {
     ProcessLightEvent (LIGHT_ROOM, LIGHT_TOGGLE);
+  }
+  
+  if (BUTTON_C.risingEdge ()) {
+    ProcessLightEvent (LIGHT_24V_LED, LIGHT_TOGGLE);
+  }
+  
+  if (BUTTON_D.risingEdge ()) {
+    ProcessLightEvent (LIGHT_ALL, LIGHT_TOGGLE);
   }
   
   //
