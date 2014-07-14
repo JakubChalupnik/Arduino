@@ -34,6 +34,8 @@ const byte SRCLK_Pin = 8; //pin 11 on the 75HC595
 
 const byte ButtonAPin = 17;
 const byte ButtonBPin = 16;
+const byte ButtonCPin = 15;
+const byte ButtonDPin = 19;
 
 //
 // Define PWM pins
@@ -90,12 +92,16 @@ typedef struct {
 Button_t Buttons [] = {
   {Bounce (ButtonAPin, 10), ButtonAPin},
   {Bounce (ButtonBPin, 10), ButtonBPin},
+  {Bounce (ButtonCPin, 10), ButtonCPin},
+  {Bounce (ButtonDPin, 10), ButtonDPin},
 };
 
 #define ButtonsSize (sizeof (Buttons) / sizeof (Button_t))
 
 #define BUTTON_A Buttons[0].Button
 #define BUTTON_B Buttons[1].Button
+#define BUTTON_C Buttons[2].Button
+#define BUTTON_D Buttons[3].Button
 
 //
 // For button inputs, defines the 'short' press used for turning lights on/off, or for longer presses defines after how long the PWM UP event will be signaled.
