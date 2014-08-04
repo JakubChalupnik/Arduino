@@ -27,6 +27,14 @@
 #include <Wire.h>  
 #include <DS1307RTC.h>
 #include <OneWire.h>
+//#include <Bounce2.h>
+
+#define DELAY_DEBOUNCE 100
+#define DELAY_REPEAT_START 400
+#define DELAY_REPEAT 250
+
+#define SWITCH_SET 0x01
+#define SWITCH_INC 0x02
 
 //
 // Pins used to drive the segment chain.
@@ -49,6 +57,13 @@ const bool ShiftPWM_balanceLoad = true;
 #define ShiftPwmMaxBrightness     63
 #define ShiftPwmFrequency         75
 #define ShiftPwmRegisters         7
+
+//
+// Switches on the back of the clock, used to set time
+//
+
+const byte SwitchLeft = 5;
+const byte SwitchRight = 7;
 
 //*******************************************************************************
 //*                               Static variables                              *
@@ -261,11 +276,31 @@ void TempSensorPoll (void) {
 }
 
 //*******************************************************************************
+//*                            Input switches support                           *
+//*******************************************************************************
+
+byte InputSwitches (void) {
+  byte SwitchesState = 0;
+  
+  if (!digitalRead (SwitchLeft)) {
+    SwitchesState |= SWITCH_SET;
+  }
+
+  if (!digitalRead (SwitchRight)) {
+    SwitchesState |= SWITCH_INC;
+  }
+  
+  return SwitchesState;
+}
+
+//*******************************************************************************
 //*                            Arduino setup method                             *
 //*******************************************************************************
 
 void setup() {                
-  Serial.begin(115200);
+
+  Serial.begin (115200);
+  Serial.println ("[ClockWork]");
 
   //
   // Initialize the pins used for commmunicating with segment drivers.
@@ -285,6 +320,15 @@ void setup() {
 
   Ds1307Init ();
 
+  //
+  // Initialize input switches
+  //
+  
+  pinMode (SwitchLeft, INPUT);
+  digitalWrite (SwitchLeft, HIGH);          // Activate internal pull-up
+  
+  pinMode (SwitchRight, INPUT);
+  digitalWrite (SwitchRight, HIGH);          // Activate internal pull-up
 }
 
 //*******************************************************************************
@@ -293,9 +337,15 @@ void setup() {
 
 void loop () {
   time_t Time;
+  time_t TimeInc;
   static time_t PreviousTime = 0;
   unsigned long Millis;
   static unsigned long LastMillis = 0;
+  
+  static byte id = 0x00;
+  static word key_counter = 0;
+  byte c;
+  byte key = 0;
 
   //
   // Any code that needs to be executed on every loop should go here
@@ -315,6 +365,43 @@ void loop () {
     return;
   }
 
+  c = InputSwitches ();
+  if(c == 0) {                    // No key pressed
+    id = 0;
+    key_counter = 0;
+  } else if(c != id) {            // New key differs from the previous one
+    id = c;
+    key_counter = 0;
+  } else {                        // New key is the same as previous one
+    key_counter++;
+  }
+  
+  if(key_counter == DELAY_DEBOUNCE) {     // Debouncing complete - set key pressed
+    key = id;
+//    Serial.write (key + '0');
+  } else if(key_counter == DELAY_REPEAT_START) {  // Repeated key
+    key = id;
+    key_counter -= DELAY_REPEAT;
+//    Serial.write (key + '0');
+  }
+
+  if (key & SWITCH_SET) {
+    key = 0;
+    TimeInc = 3600;
+  } else if (key & SWITCH_INC) {
+    key = 0;
+    TimeInc = 60;
+  } else {
+    TimeInc = 0;
+  }
+  
+  if (TimeInc != 0) {
+    Time = RTC.get ();
+    Time += TimeInc;
+    RTC.set (Time);
+    setTime (Time);
+  }
+    
   //
   // Every time the time changes, display the new time on the screen
   // We're only displaying hours and minutes, but the code is called for every 
