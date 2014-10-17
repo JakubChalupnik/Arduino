@@ -9,11 +9,11 @@
 #define LED_PIN_C 16
 #define LED_PIN_D 17
 
-#define LED_PIN_OE 9
-#define LED_PIN_R1 20
+#define LED_PIN_OE 7
+#define LED_PIN_R1 8
+#define LED_PIN_R2 9
 #define LED_PIN_STB 18
 #define LED_PIN_CLK 19
-#define LED_PIN_R2 21
 
 #define LedOeDisable() digitalWrite(LED_PIN_OE, 1);
 #define LedOeEnable()  digitalWrite(LED_PIN_OE, 0);
@@ -22,13 +22,13 @@
 #define LedStrobeLow() digitalWrite(LED_PIN_STB, 0);
 #define LedStrobeHigh() digitalWrite(LED_PIN_STB, 1);
 
-// R1 corresponds to PB1, R2 to PB4
+// R1 corresponds to PB0, R2 to PB1
 
-#define LedR1Low() PORTB &= ~0b00000010
-#define LedR1High() PORTB |= 0b00000010
+#define LedR1Low() PORTB &= ~0b00000001
+#define LedR1High() PORTB |= 0b00000001
 
-#define LedR2Low() PORTB &= ~0b00010000
-#define LedR2High() PORTB |= 0b00010000
+#define LedR2Low() PORTB &= ~0b00000010
+#define LedR2High() PORTB |= 0b00000010
 
 #define LedR1Set(val) {if (val) LedR1High (); else LedR1Low (); }
 #define LedR2Set(val) {if (val) LedR2High (); else LedR2Low (); }
