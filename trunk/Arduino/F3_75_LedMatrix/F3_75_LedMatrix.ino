@@ -4,16 +4,16 @@
 #define LED_SCAN_LINES 16
 #define LED_SCAN_MASK 0x0F
 
-#define LED_PIN_A 4
-#define LED_PIN_B 5
-#define LED_PIN_C 6
-#define LED_PIN_D 7
+#define LED_PIN_A 14
+#define LED_PIN_B 15
+#define LED_PIN_C 16
+#define LED_PIN_D 17
 
-#define LED_PIN_OE 8
-#define LED_PIN_R1 9
-#define LED_PIN_STB 10
-#define LED_PIN_CLK 11
-#define LED_PIN_R2 12
+#define LED_PIN_OE 9
+#define LED_PIN_R1 20
+#define LED_PIN_STB 18
+#define LED_PIN_CLK 19
+#define LED_PIN_R2 21
 
 #define LedOeDisable() digitalWrite(LED_PIN_OE, 1);
 #define LedOeEnable()  digitalWrite(LED_PIN_OE, 0);
