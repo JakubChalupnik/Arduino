@@ -53,12 +53,14 @@
 // The time critical macros do not use digitalWrite, but direct port access!
 //
 
-#define LedOeDisable() digitalWrite(LED_PIN_OE, 1);
-#define LedOeEnable()  digitalWrite(LED_PIN_OE, 0);
-#define LedClkLow() digitalWrite(LED_PIN_CLK, 0);
-#define LedClkHigh() digitalWrite(LED_PIN_CLK, 1);
-#define LedStrobeLow() digitalWrite(LED_PIN_STB, 0);
-#define LedStrobeHigh() digitalWrite(LED_PIN_STB, 1);
+#define LedClkLow() PORTC &= ~0b00100000
+#define LedClkHigh() PORTC |= 0b00100000
+
+#define LedStrobeLow() PORTC &= ~0b00010000
+#define LedStrobeHigh() PORTC |= 0b00010000
+
+#define LedOeDisable() PORTD |= 0b10000000
+#define LedOeEnable()  PORTD &= ~0b10000000
 
 #define LedR1Low() PORTB &= ~0b00000001
 #define LedR1High() PORTB |= 0b00000001
@@ -77,7 +79,7 @@
 // Screen buffer. For the moment just filled with a static picture.
 //
 
-uint8_t LedBuffer [LED_HALF * 2] ={
+uint8_t Screen [2][LED_HALF * 2] ={
  0, 0, 130, 192, 63, 255, 255, 255, 0, 0, 133, 224, 3, 255, 255, 255, 0, 0, 131, 224, 1, 13, 255, 255, 0, 1, 135, 240, 0, 162, 255, 255, 0, 1, 147, 96, 0, 24, 23, 255, 0, 1, 179, 192, 0, 11, 175, 255, 0, 1, 55, 128, 0, 0, 23, 255, 0, 1, 254, 0, 0, 0, 5, 127, 0, 3, 254, 32, 0, 0, 2, 191, 0, 3, 218, 0, 0, 0, 0, 239, 0, 1, 145, 128, 0, 0, 0, 31, 0, 1, 128, 0, 0, 0, 0, 31, 0, 0, 128, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 23, 0, 0, 96, 0, 0, 1, 0, 7, 0, 0, 0, 0, 0, 1, 0, 11, 0, 0, 0, 64, 0, 3, 0, 7, 0, 0, 0, 0, 0, 3, 128, 3, 0, 0, 0, 0, 0, 7, 0, 7, 0, 0, 0, 0, 2, 5, 32, 3, 0, 0, 48, 0, 2, 7, 248, 7, 0, 1, 204, 0, 7, 6, 224, 7, 0, 3, 206, 0, 7, 135, 112, 7, 0, 6, 222, 0, 7, 207, 192, 15, 0, 15, 223, 0, 7, 156, 0, 14, 0, 12, 190, 0, 12, 12, 0, 63, 128, 12, 216, 0, 0, 0, 1, 255, 224, 12, 153, 0, 0, 0, 15, 255, 248, 12, 111, 0, 0, 0, 255, 255, 255, 12, 111, 0, 0, 3, 254, 139, 127, 198, 60, 0, 0, 31, 255, 254, 15, 254, 8, 0, 0, 127, 223, 255
 };
 
@@ -115,14 +117,13 @@ ISR (TIMER1_COMPA_vect) {
 //*******************************************************************************
 
 void LedClear (void) {
-  memset (LedBuffer, 0, sizeof (LedBuffer));
+
+  memset (Screen, 0, sizeof (Screen));
 }
 
 void LedSetRow (uint8_t Row) {
-  digitalWrite(LED_PIN_A, (Row & 0x01));
-  digitalWrite(LED_PIN_B, (Row & 0x02));
-  digitalWrite(LED_PIN_C, (Row & 0x04));
-  digitalWrite(LED_PIN_D, (Row & 0x08));
+  
+  PORTC = (PORTC & 0xF0) | Row;
 }
 
 //
@@ -133,13 +134,20 @@ void LedSetRow (uint8_t Row) {
 void LedScan (void) {
   uint8_t i, b, LedByteU, LedByteL;
   uint8_t *LedByteUPtr, *LedByteLPtr;
-  static uint8_t LedRow = LED_SCAN_LINES - 1;    // Active row - the one that's just displayed
+  static uint8_t LedRow = 0;         // Active row - the one that's just displayed
 
-  LedClkLow ();
-  LedRow = (LedRow + 1) & LED_SCAN_MASK;
-  LedByteUPtr = LedBuffer + LedRow * 8;
-  LedByteLPtr = LedByteUPtr + LED_HALF;
+  LedRow = (LedRow + 1) & (0x1F);
+
+  if (LedRow > 15) {
+    LedOeDisable ();
+    return;  
+  }
   
+  LedClkLow ();
+  LedByteUPtr = Screen[0] + LedRow * 8;
+  LedByteLPtr = LedByteUPtr + LED_HALF;
+  LedOeDisable ();
+
   for (i = 0; i < 8; i++) {
     LedByteU = *LedByteUPtr++;
     LedByteL = *LedByteLPtr++;
@@ -153,18 +161,17 @@ void LedScan (void) {
       LedClkLow ();
     }
   }
-  
-  LedOeDisable ();
+
   LedSetRow (LedRow);
   LedStrobeLow ();
   LedStrobeHigh ();
   LedStrobeLow ();
-  
+
   LedOeEnable ();
 }
 
 void LedConfig (void) {
-  
+
   pinMode(LED_PIN_A, OUTPUT);
   pinMode(LED_PIN_B, OUTPUT);
   pinMode(LED_PIN_C, OUTPUT);
@@ -174,25 +181,25 @@ void LedConfig (void) {
   pinMode(LED_PIN_STB, OUTPUT);
   pinMode(LED_PIN_CLK, OUTPUT);
   pinMode(LED_PIN_R2, OUTPUT);
- 
+
   LedStrobeLow ();
   LedClkLow ();
-  LedOeDisable ();  
-}  
-  
+  LedOeDisable ();
+}
+
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //*******************************************************************************
- 
+
 void setup () {
-  
+
   Serial.begin (115200);
   Serial.println (F("[F3.75 LedMatrix test]"));
 
   LedConfig ();
 
   //
-  // Set timer1 interrupt at 1kHz
+  // Set timer1 interrupt at 1 kHz
   //
   
   cli();
@@ -200,7 +207,7 @@ void setup () {
   TCCR1A = 0;
   TCCR1B = 0;
   TCNT1  = 0;
-  OCR1A = 16000 - 1;       
+  OCR1A = 8000 - 1;       
   TCCR1B |= (1 << WGM12);
   TCCR1B |= (1 << CS10);  
   TIMSK1 |= (1 << OCIE1A);
