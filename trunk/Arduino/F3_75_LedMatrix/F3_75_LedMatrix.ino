@@ -14,6 +14,7 @@
 //* Kubik       18.10.2014 Added interrupt support
 //* Kubik       18.10.2014 Added pixel, font and bitmap drawing
 //* Kubik       15.11.2014 Fixed pixel overflow, added some font functions and dimming
+//* Kubik       15.11.2014 Added 8x14 font, OR drawing method and RFM12B support (Jeelib)
 
 //*******************************************************************************
 //*                            HW details                                       *
@@ -101,6 +102,7 @@ uint8_t Screen [2][LED_HALF * 2];
 
 volatile byte Flags;
 
+#define FLAGS_DRAW_OR           0x04    // When set, LED routines do not clear pixels
 #define FLAGS_FLIP_PAGE         0x02    // Set for flipping screens
 #define FLAGS_PAGE_DISPLAYED    0x01    // Do not use - interrupt routine uses that
 
@@ -115,6 +117,13 @@ volatile byte Flags;
 
 byte LedPwm = 4;
 
+unsigned char Day = 0;
+unsigned char Month = 0;
+unsigned char Hour = 0;
+unsigned char Minute = 0;
+int InnerTemperature;
+int OuterTemperature; 
+
 //*******************************************************************************
 //*                          Fonts and bitmaps                                  *
 //*******************************************************************************
@@ -128,7 +137,11 @@ const byte Font8x6[96 * 8] PROGMEM = {
 #include "FN6X8_reduced.h"
 };
 
-#define Font8Byte(Index) pgm_read_byte (((PGM_P) Font8x6) + Index)
+// #define Font8Byte(Index) pgm_read_byte (((PGM_P) Font8x6) + Index)
+
+const byte Font8x14[256 * 8 * 2] PROGMEM = {
+#include "Bold8x14.h"
+};
 
 const byte BitmapAda_P[] PROGMEM = {
 //#include "BitmapAda.h"
@@ -146,6 +159,91 @@ void LedScan (void);
 ISR (TIMER1_COMPA_vect) {
   LedScan ();
 }
+
+//*******************************************************************************
+//*                              RFM12B support                                 *
+//*******************************************************************************
+#include <Time.h>
+#include <JeeLib.h>
+#include <PacketDefine.h>
+
+#define DEBUG_RMF12 0
+
+//----------------------------------------------------------------------------
+//
+// PacketDecode processes the packet received from RFM12 and updates the global variables for time, pressure, humidity and external temperature accordingly
+//
+
+void PacketDecode () {
+  char c[4];
+  MeteoPayload_t *Meteo;
+  TimePayload_t *Time;
+  TemperaturePayload_t *Temp;
+
+  switch (*rf12_data) {
+    
+    case RF12_PACKET_TIME:
+      Time = (TimePayload_t *) rf12_data;
+      Day = Time->day;
+      Month = Time->month;
+      Hour = Time->hour;
+      Minute = Time->minute;
+      setTime (Hour, Minute, 0, Day, Month, 2000 + Time->year);
+
+#if DEBUG_RMF12
+      Serial.print (F("Time packet: "));
+      Serial.print (Day);
+      Serial.print ('.');
+      Serial.print (Month);
+      Serial.print (' ');
+      Serial.print (2000 + Time->year);
+      Serial.print (' ');
+      Serial.print (Hour);
+      Serial.print (':');
+      Serial.println (Minute);
+#endif // DEBUG_RMF12
+
+      break;
+
+    case RF12_PACKET_METEO:
+
+      break;
+      
+    case RF12_PACKET_TEMPERATURE:
+      Temp = (TemperaturePayload_t *) rf12_data;
+      InnerTemperature = Temp->temp1;
+      OuterTemperature = Temp->temp2;
+
+#if DEBUG_RMF12
+      Serial.print (F("Temperature packet: "));
+      Serial.print (InnerTemperature);
+      Serial.print (' ');
+      Serial.println (OuterTemperature);
+#endif //DEBUG_RMF12
+
+      break;
+
+    default:
+
+#if DEBUG_RMF12
+      uint8_t Rf12Len;
+      volatile uint8_t *Rf12Data;
+      Rf12Len = rf12_len;
+      Rf12Data = rf12_data;
+      Serial.print (F("Unknown packet: "));
+      while (Rf12Len > 0) {
+        sprintf (c, "%02X ", *Rf12Data);
+        Serial.print (c);
+        Rf12Len--;
+        Rf12Data++;
+      }
+      Serial.println ();
+#endif // DEBUG_RMF12
+
+      break;
+  }
+} 
+
 
 //*******************************************************************************
 //*                             LED matrix routines                             *
@@ -265,7 +363,7 @@ void LedClear (void) {
 }
 
 //
-// Sets/clears the pixel at coordinates x, y
+// Sets/clears the pixel at coordinates x, y.
 // It does not check any boundaries. 
 // When called with wrong arguments, might crash the whole thing!
 //
@@ -274,12 +372,12 @@ void LedPixelSet (uint8_t x, uint8_t y, uint8_t b) {
   uint8_t *ScreenPtr;
   uint8_t Mask;
 
+  if ((Flags & FLAGS_DRAW_OR) && !b) return;
   Mask = 1 << (7 - (x & 0x07));
   ScreenPtr = Screen [ScreenPageInactive ()] + (y << 3) + (x >> 3); 
   if (b) {
     *ScreenPtr |= Mask;
-  } 
-  else {
+  } else {
     *ScreenPtr &= ~Mask;
   }
 }
@@ -354,8 +452,6 @@ void LedBitmap_P (uint8_t X, uint8_t Y, uint8_t XSize, uint8_t YSize, PGM_P Bitm
   uint8_t x, y;
   uint8_t Pixel, XSizeBytes;
   
-  printf ("LedBitmap_P = %4x\n", (uint16_t) Bitmap);
-
   //
   // Test input parameters and either crop them or bail out completely.
   // X and Y can't be negative as they're defined as UINT.
@@ -414,6 +510,18 @@ void PutString8 (uint8_t x, uint8_t y, const char *s) {
   }
 }
 
+void PutChar14 (uint8_t x, uint8_t y, byte c) {
+
+  LedBitmap_P (x, y, 8, 14, (PGM_P) (Font8x14 + 14 * c));
+}
+
+
+const byte Sprite_p[] PROGMEM = {
+  0x00, 0x00, 0x1F, 0x20, 0x29, 0x21, 0x21, 0x29, 0x20, 0x1F, 0xC0, 0x20, 0x20, 0xA0,
+};
+
+
+
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //*******************************************************************************
@@ -424,6 +532,8 @@ void setup () {
   Serial.println (F("[F3.75 LedMatrix test]"));
 
   LedConfig ();
+
+  Flags |= FLAGS_DRAW_OR;    // Use OR method of drawing
 
   //
   // Set timer1 interrupt at relatively quick rate (8kHz) to help with PWM dimming
@@ -448,12 +558,17 @@ void setup () {
   
   LedPwm = 0;
   LedClear ();
-  PutString8 (16, 0, "F3-75");
+  PutString8 (11, 0, "F3.75-B");
   PutString8 (14, 8, "Matrix");
   PutString8 (8, 16, "(c) 2014");
   PutString8 (16, 24, "Kubik");
 
   Flags |= FLAGS_FLIP_PAGE;
+
+  rf12_initialize(RF12_NET_NODE, RF12_868MHZ, RF12_NET_GROUP); 
+  setTime (0, 0, 0, 1, 1, 2013);    // Dummy time until the time gets synced 
+  
+  delay (1000);
 }
 
 //*******************************************************************************
@@ -461,8 +576,71 @@ void setup () {
 //*******************************************************************************
 
 void loop () {
-
-  delay (1000);
+  unsigned long Millis;
+  static unsigned long LastMillis;
+  static int Second = 0;
+  time_t Time; 
+  static time_t PreviousTime = 0;
+  static unsigned int LightIntensity = 0; 
   
+  //
+  // Get the time stamp of this loop pass
+  //
+  
+  Millis = millis();
+ 
+  //
+  // Check if any valid packet was received, and decode it
+  //
+  
+  if (rf12_recvDone() && rf12_crc == 0) {
+    PacketDecode ();
+  }
+
+  //
+  // Every time the Millis changes, measure the light intensity, set the PWM to reflex it, and refresh the display
+  //
+  
+  if (Millis = LastMillis) {
+    return;
+  }
+  
+  LastMillis = Millis;
+  LightIntensity = ((LightIntensity * 31) + analogRead(0)) / 32;
+    
+    //
+    // So far, it looks like minimal usable PWM value for VFD is ~48.
+    // Light values for night are below 50, dark room with monitor on is ~300, light on boosts the light value to the max.
+    //
+
+  Time = now ();
+  
+  if (Time != PreviousTime) {
+    PreviousTime = Time; 
+    
+    LedClear ();
+    if (hour () > 9) {
+      PutChar8 (12 + 1, 2, (hour () / 10) + '0');
+      PutChar14 (5, 20, (hour () / 10) + '0');
+    }
+
+    PutChar8 (12 + 7, 2, (hour () % 10) + '0');
+    PutChar8 (12 + 11, 2, ':');
+    PutChar8 (12 + 15, 2, (minute () / 10) + '0');
+    PutChar8 (12 + 21, 2, (minute () % 10) + '0');
+    PutChar8 (12 + 25, 2, ':');
+    PutChar8 (12 + 29, 2, (second () / 10) + '0');
+    PutChar8 (12 + 35, 2, (second () % 10) + '0');
+
+    PutChar14 (13, 20, (hour () % 10) + '0');
+    PutChar14 (19, 20, ':');
+    PutChar14 (25, 20, (minute () / 10) + '0');
+    PutChar14 (33, 20, (minute () % 10) + '0');
+    PutChar14 (39, 20, ':');
+    PutChar14 (45, 20, (second () / 10) + '0');
+    PutChar14 (53, 20, (second () % 10) + '0');
+
+    Flags |= FLAGS_FLIP_PAGE;
+  }
 }
 
