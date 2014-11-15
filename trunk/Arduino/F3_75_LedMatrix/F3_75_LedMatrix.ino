@@ -15,6 +15,7 @@
 //* Kubik       18.10.2014 Added pixel, font and bitmap drawing
 //* Kubik       15.11.2014 Fixed pixel overflow, added some font functions and dimming
 //* Kubik       15.11.2014 Added 8x14 font, OR drawing method and RFM12B support (Jeelib)
+//* Kubik       16.11.2014 Added photoresistor support (used for dimming)
 
 //*******************************************************************************
 //*                            HW details                                       *
@@ -604,43 +605,62 @@ void loop () {
   if (Millis = LastMillis) {
     return;
   }
-  
   LastMillis = Millis;
-  LightIntensity = ((LightIntensity * 31) + analogRead(0)) / 32;
-    
-    //
-    // So far, it looks like minimal usable PWM value for VFD is ~48.
-    // Light values for night are below 50, dark room with monitor on is ~300, light on boosts the light value to the max.
-    //
+  
+  //
+  // LedPwm can be from 0 (full) to ~8 (dimmed).
+  // Light values are between single digit numbers for bright light to ~1000 for dark night.
+  //
+  
+  LightIntensity = ((LightIntensity * 31) + analogRead(7)) / 32;
+  if (LightIntensity < 100) {
+    LedPwm = 0;
+  } else if (LightIntensity < 200) {
+    LedPwm = 1;
+  } else if (LightIntensity < 500) {
+    LedPwm = 2;
+  } else {
+    LedPwm = 8;
+  }
+  
+  //
+  // Did second change?
+  //
 
   Time = now ();
   
-  if (Time != PreviousTime) {
-    PreviousTime = Time; 
-    
-    LedClear ();
-    if (hour () > 9) {
-      PutChar8 (12 + 1, 2, (hour () / 10) + '0');
-      PutChar14 (5, 20, (hour () / 10) + '0');
-    }
-
-    PutChar8 (12 + 7, 2, (hour () % 10) + '0');
-    PutChar8 (12 + 11, 2, ':');
-    PutChar8 (12 + 15, 2, (minute () / 10) + '0');
-    PutChar8 (12 + 21, 2, (minute () % 10) + '0');
-    PutChar8 (12 + 25, 2, ':');
-    PutChar8 (12 + 29, 2, (second () / 10) + '0');
-    PutChar8 (12 + 35, 2, (second () % 10) + '0');
-
-    PutChar14 (13, 20, (hour () % 10) + '0');
-    PutChar14 (19, 20, ':');
-    PutChar14 (25, 20, (minute () / 10) + '0');
-    PutChar14 (33, 20, (minute () % 10) + '0');
-    PutChar14 (39, 20, ':');
-    PutChar14 (45, 20, (second () / 10) + '0');
-    PutChar14 (53, 20, (second () % 10) + '0');
-
-    Flags |= FLAGS_FLIP_PAGE;
+  if (Time == PreviousTime) {
+    return;
   }
+  
+  PreviousTime = Time; 
+  
+  //
+  // Do the following every second
+  //
+
+  LedClear ();
+  if (hour () > 9) {
+    PutChar8 (12 + 1, 2, (hour () / 10) + '0');
+    PutChar14 (5, 20, (hour () / 10) + '0');
+  }
+
+  PutChar8 (12 + 7, 2, (hour () % 10) + '0');
+  PutChar8 (12 + 11, 2, ':');
+  PutChar8 (12 + 15, 2, (minute () / 10) + '0');
+  PutChar8 (12 + 21, 2, (minute () % 10) + '0');
+  PutChar8 (12 + 25, 2, ':');
+  PutChar8 (12 + 29, 2, (second () / 10) + '0');
+  PutChar8 (12 + 35, 2, (second () % 10) + '0');
+
+  PutChar14 (13, 20, (hour () % 10) + '0');
+  PutChar14 (19, 20, ':');
+  PutChar14 (25, 20, (minute () / 10) + '0');
+  PutChar14 (33, 20, (minute () % 10) + '0');
+  PutChar14 (39, 20, ':');
+  PutChar14 (45, 20, (second () / 10) + '0');
+  PutChar14 (53, 20, (second () % 10) + '0');
+
+  Flags |= FLAGS_FLIP_PAGE;
 }
 
