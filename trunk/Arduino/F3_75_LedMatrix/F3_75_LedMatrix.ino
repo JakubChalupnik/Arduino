@@ -12,6 +12,7 @@
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       18.10.2014 First working version with Pro Mini
 //* Kubik       18.10.2014 Added interrupt support
+//* Kubik       18.10.2014 Added pixel, font and bitmap drawing
 
 //*******************************************************************************
 //*                            HW details                                       *
@@ -26,9 +27,9 @@
 //*******************************************************************************
 //*                           Includes and defines                              *
 //*******************************************************************************
-
 //
-// Display size and pins used
+// Display size and pins used. Note that most of the pin definitions are basically
+// unused as the access is done by direct port access!
 //
 
 #define LED_WIDTH   64
@@ -68,43 +69,61 @@
 #define LedR2Low() PORTB &= ~0b00000010
 #define LedR2High() PORTB |= 0b00000010
 
-#define LedR1Set(val) {if (val) LedR1High (); else LedR1Low (); }
-#define LedR2Set(val) {if (val) LedR2High (); else LedR2Low (); }
+#define LedR1Set(val) {if (val) LedR1Low (); else LedR1High (); }
+#define LedR2Set(val) {if (val) LedR2Low (); else LedR2High (); }
 
 //*******************************************************************************
 //*                               Static variables                              *
 //*******************************************************************************
-
 //
 // Screen buffer. For the moment just filled with a static picture.
 //
 
-uint8_t Screen [2][LED_HALF * 2] ={
- 0, 0, 130, 192, 63, 255, 255, 255, 0, 0, 133, 224, 3, 255, 255, 255, 0, 0, 131, 224, 1, 13, 255, 255, 0, 1, 135, 240, 0, 162, 255, 255, 0, 1, 147, 96, 0, 24, 23, 255, 0, 1, 179, 192, 0, 11, 175, 255, 0, 1, 55, 128, 0, 0, 23, 255, 0, 1, 254, 0, 0, 0, 5, 127, 0, 3, 254, 32, 0, 0, 2, 191, 0, 3, 218, 0, 0, 0, 0, 239, 0, 1, 145, 128, 0, 0, 0, 31, 0, 1, 128, 0, 0, 0, 0, 31, 0, 0, 128, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 23, 0, 0, 96, 0, 0, 1, 0, 7, 0, 0, 0, 0, 0, 1, 0, 11, 0, 0, 0, 64, 0, 3, 0, 7, 0, 0, 0, 0, 0, 3, 128, 3, 0, 0, 0, 0, 0, 7, 0, 7, 0, 0, 0, 0, 2, 5, 32, 3, 0, 0, 48, 0, 2, 7, 248, 7, 0, 1, 204, 0, 7, 6, 224, 7, 0, 3, 206, 0, 7, 135, 112, 7, 0, 6, 222, 0, 7, 207, 192, 15, 0, 15, 223, 0, 7, 156, 0, 14, 0, 12, 190, 0, 12, 12, 0, 63, 128, 12, 216, 0, 0, 0, 1, 255, 224, 12, 153, 0, 0, 0, 15, 255, 248, 12, 111, 0, 0, 0, 255, 255, 255, 12, 111, 0, 0, 3, 254, 139, 127, 198, 60, 0, 0, 31, 255, 254, 15, 254, 8, 0, 0, 127, 223, 255
-};
+uint8_t Screen [2][LED_HALF * 2];
 
 //
-// This variable controls pretty much everything. Main program can set FLAGS_FADE_PAGE
-// or FLAGS_FLIP_PAGE (see above) but should not touch other flags.
-// Main program shall always update the screen buffer that is returned by ScreenPageInactive()
+// This variable controls pretty much everything. 
+// Main program can set FLAGS_FLIP_PAGE but should not touch other flags.
+// Main program shall always update the screen buffer that is returned by ScreenPageInactive().
+// All Led... routines do that already.
 //
 
 volatile byte Flags;
 
-#define FLAGS_FADING            0x08    // Do not use - interrupt routine uses this
-#define FLAGS_FADE_PAGE         0x04    // Set for fading between screens (e.g. "flags |= FLAGS_FADE_PAGE;" )
 #define FLAGS_FLIP_PAGE         0x02    // Set for flipping screens
 #define FLAGS_PAGE_DISPLAYED    0x01    // Do not use - interrupt routine uses that
-                                        // to keep track about what screen buffer is displayed
-#define ScreenPageDisplayed()   (Flags & FLAGS_PAGE_DISPLAYED)
-#define ScreenPageInactive()    (~Flags & FLAGS_PAGE_DISPLAYED)
+
+// to keep track about what screen buffer is displayed
+#define ScreenPageDisplayed()  (Flags & FLAGS_PAGE_DISPLAYED)
+#define ScreenPageInactive()   (~Flags & FLAGS_PAGE_DISPLAYED)
+
+
+//*******************************************************************************
+//*                          Fonts and bitmaps                                  *
+//*******************************************************************************
+//
+// Fonts by holger.klabunde@t-online.de - I found them in a package named
+// "T6963 based LCD(8x8).zip"
+// The fonts are in program memory space so they have to be accessed in a special way!
+//
+
+const byte font_8x6[96 * 8] PROGMEM = {
+#include "FN6X8_reduced.h"
+};
+
+#define FontByte(Index) pgm_read_byte (((PGM_P) font_8x6) + Index)
+
+const byte BitmapAda_P[] PROGMEM = {
+#include "BitmapAda.h"
+};
+
 
 //*******************************************************************************
 //*                              Interrupt handler                              *
 //*******************************************************************************
-
 //
-// Activated every 1ms
+// Activated every 0.5ms, uses timer1.
+// At the moment only updates the LED matrix.
 //
 
 void LedScan (void);
@@ -115,14 +134,12 @@ ISR (TIMER1_COMPA_vect) {
 //*******************************************************************************
 //*                             LED matrix routines                             *
 //*******************************************************************************
-
-void LedClear (void) {
-
-  memset (Screen, 0, sizeof (Screen));
-}
+//
+// Low level functions: LedSetRow, LedScan
+// 
 
 void LedSetRow (uint8_t Row) {
-  
+
   PORTC = (PORTC & 0xF0) | Row;
 }
 
@@ -136,17 +153,21 @@ void LedScan (void) {
   uint8_t *LedByteUPtr, *LedByteLPtr;
   static uint8_t LedRow = 0;         // Active row - the one that's just displayed
 
-  LedRow = (LedRow + 1) & (0x1F);
+  //  LedRow++;
+  //  
+  //  if (LedRow >= 32) {
+  //    LedRow = 0;
+  //  } else if (LedRow > 15) {
+  //    LedOeDisable ();
+  //    return;  
+  //  }
+  //  
 
-  if (LedRow > 15) {
-    LedOeDisable ();
-    return;  
-  }
-  
-  LedClkLow ();
-  LedByteUPtr = Screen[0] + LedRow * 8;
-  LedByteLPtr = LedByteUPtr + LED_HALF;
   LedOeDisable ();
+
+  LedClkLow ();
+  LedByteUPtr = Screen[ScreenPageDisplayed()] + LedRow * 8;
+  LedByteLPtr = LedByteUPtr + LED_HALF;
 
   for (i = 0; i < 8; i++) {
     LedByteU = *LedByteUPtr++;
@@ -167,8 +188,24 @@ void LedScan (void) {
   LedStrobeHigh ();
   LedStrobeLow ();
 
+  LedRow = (LedRow + 1) & 0x0F;
+
+  //
+  // Handle page fliping - if the flag is set, wait until the whole buffer
+  // is displayed (i.e. Row is 0 again) and then toggle the FLAGS_PAGE_DISPLAYED
+  //
+
+  if((LedRow == 0) && (Flags & FLAGS_FLIP_PAGE)) {       // If someone requested fliping page
+    Flags ^= FLAGS_PAGE_DISPLAYED;  // Flip the pages - displayed becomes inactive and vice versa
+    Flags &= ~FLAGS_FLIP_PAGE;      // and clear the flag to signal the page was flipped
+  }
+
   LedOeEnable ();
 }
+
+//
+// Configures pins used for LED matrix communication
+//
 
 void LedConfig (void) {
 
@@ -188,6 +225,166 @@ void LedConfig (void) {
 }
 
 //*******************************************************************************
+//*                              Led Matrix Drawing                             *
+//*******************************************************************************
+
+//
+// Clears the inactive screen page
+//
+
+void LedClear (void) {
+
+  memset (Screen [ScreenPageInactive ()], 0x00, sizeof (Screen [0]));
+}
+
+//
+// Sets/clears the pixel at coordinates x, y
+// It does not check any boundaries. 
+// When called with wrong arguments, might crash the whole thing!
+//
+
+void LedPixelSet (uint8_t x, uint8_t y, uint8_t b) {
+  uint8_t *ScreenPtr;
+  uint8_t Mask;
+
+  Mask = 1 << (7 - (x & 0x07));
+  ScreenPtr = Screen [ScreenPageInactive ()] + (y << 3) + (x >> 3); 
+  if (b) {
+    *ScreenPtr |= Mask;
+  } 
+  else {
+    *ScreenPtr &= ~Mask;
+  }
+}
+
+//
+// Gets the value of the pixel at coordinates x, y
+// Does not check any boundaries, may return garbage on out-of-screen access
+//
+
+uint8_t LedPixelGet (uint8_t x, uint8_t y) {
+  uint8_t *ScreenPtr;
+  uint8_t Mask;
+
+  Mask = 1 << (7 - (x & 0x07));
+  ScreenPtr = Screen [ScreenPageInactive ()] + (y << 3) + (x >> 3); 
+
+  return (*ScreenPtr & Mask) ? 1 : 0;
+}
+
+//
+// Draws bitmap Bitmap from RAM at coordinates X, Y. Pixel size of the bitmap is XSize, YSize
+// Check boundaries, and crops or bails out on invalid input.
+//
+
+void LedBitmap (uint8_t X, uint8_t Y, uint8_t XSize, uint8_t YSize, uint8_t *Bitmap) {
+  uint8_t x, y;
+  uint8_t Pixel, XSizeBytes;
+
+  //
+  // Test input parameters and either crop them or bail out completely.
+  // X and Y can't be negative as they're defined as UINT.
+  //
+
+  if (X >= LED_WIDTH) {  
+    return;
+  }
+
+  if (Y >= LED_HEIGHT) {  
+    return;
+  }
+
+  if ((X + XSize) > LED_WIDTH) {  
+    XSize =  LED_WIDTH - X;
+  }
+
+  if ((Y + YSize) > LED_HEIGHT) {  
+    YSize =  LED_HEIGHT - Y;
+  }
+
+  XSizeBytes = (XSize + 7) >> 3;
+
+  //
+  // Go through all rows (Y) of the bitmap, and process every row bit by bit
+  // To get the value of the pixel, find the corresponding byte in bitmap first:
+  // Multiple current row by width of bitmap in bytes, then add X divided by 8 (8 bits per byte)
+  //
+
+  for (y = 0; y < YSize; y++) {
+    for (x = 0; x < XSize; x++) {
+      Pixel = Bitmap [(y * XSizeBytes) + (x >> 3)];
+      LedPixelSet (X + x, Y + y, Pixel & (1 << (7 - (x & 0x07))));
+    }
+  }
+}
+
+//
+// Draws bitmap Bitmap from PGM at coordinates X, Y. Pixel size of the bitmap is XSize, YSize
+// Check boundaries, and crops or bails out on invalid input.
+//
+
+void LedBitmap_P (uint8_t X, uint8_t Y, uint8_t XSize, uint8_t YSize, PGM_P Bitmap) {
+  uint8_t x, y;
+  uint8_t Pixel, XSizeBytes;
+
+  //
+  // Test input parameters and either crop them or bail out completely.
+  // X and Y can't be negative as they're defined as UINT.
+  //
+
+  if (X >= LED_WIDTH) {  
+    return;
+  }
+
+  if (Y >= LED_HEIGHT) {  
+    return;
+  }
+
+  if ((X + XSize) > LED_WIDTH) {  
+    XSize =  LED_WIDTH - X;
+  }
+
+  if ((Y + YSize) > LED_HEIGHT) {  
+    YSize =  LED_HEIGHT - Y;
+  }
+
+  XSizeBytes = (XSize + 7) >> 3;
+
+  //
+  // Go through all rows (Y) of the bitmap, and process every row bit by bit
+  // To get the value of the pixel, find the corresponding byte in bitmap first:
+  // Multiple current row by width of bitmap in bytes, then add X divided by 8 (8 bits per byte)
+  //
+
+  for (y = 0; y < YSize; y++) {
+    for (x = 0; x < XSize; x++) {
+      Pixel = pgm_read_byte (Bitmap + (y * XSizeBytes) + (x >> 3));
+      LedPixelSet (X + x, Y + y, Pixel & (1 << (7 - (x & 0x07))));
+    }
+  }
+}
+
+//
+// Draws a character at specified coordinates x, y. 
+// Assumes first valid character to be ' ', draws garbage for anything below ' '
+//
+
+void PutChar(uint8_t x, uint8_t y, byte c) {
+
+  LedBitmap_P (x, y, 6, 8, (PGM_P) (font_8x6 + 8 * (c - ' ')));
+}
+
+const byte Sprite_P [] PROGMEM = {
+  0x70,		// .XXX....
+  0x88,		// X...X...
+  0x08,		// ....X...
+  0x30,		// ..XX....
+  0x20,		// ..X.....
+  0x00,		// ........
+  0x20,		// ..X.....
+}; 
+
+//*******************************************************************************
 //*                            Arduino setup method                             *
 //*******************************************************************************
 
@@ -199,10 +396,8 @@ void setup () {
   LedConfig ();
 
   //
-  // Set timer1 interrupt at 1 kHz
+  // Set timer1 interrupt at 2 kHz
   //
-  
-  cli();
 
   TCCR1A = 0;
   TCCR1B = 0;
@@ -212,17 +407,26 @@ void setup () {
   TCCR1B |= (1 << CS10);  
   TIMSK1 |= (1 << OCIE1A);
 
-  sei();
+  //  LedBitmap_P (0, 0, 64, 32, (PGM_P) BitmapAda_P);
 }
-  
+
 //*******************************************************************************
 //*                              Main program loop                              *
 //*******************************************************************************
 
 void loop () {
-  static uint32_t lastCountTime = 0;
+  int i;
 
-  if (millis() != lastCountTime) {
-    lastCountTime = millis();
-  }
+  //  for (i = 0; i < 24; i++) {
+  //    LedClear ();
+  //    LedBitmap_P (i, i, 6, 7, (PGM_P) Sprite_P);
+  //    Flags |= FLAGS_FLIP_PAGE;
+  //    delay (100);
+  //  }
+
+  LedClear ();
+  LedBitmap_P (0, 0, 64, 32, (PGM_P) BitmapAda_P);
+  Flags |= FLAGS_FLIP_PAGE;
+  delay (100);
 }
+
