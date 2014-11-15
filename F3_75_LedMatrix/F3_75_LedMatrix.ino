@@ -13,6 +13,7 @@
 //* Kubik       18.10.2014 First working version with Pro Mini
 //* Kubik       18.10.2014 Added interrupt support
 //* Kubik       18.10.2014 Added pixel, font and bitmap drawing
+//* Kubik       15.11.2014 Fixed pixel overflow, added some font functions and dimming
 
 //*******************************************************************************
 //*                            HW details                                       *
@@ -73,10 +74,20 @@
 #define LedR2Set(val) {if (val) LedR2Low (); else LedR2High (); }
 
 //*******************************************************************************
+//*                               printf support                                *
+//*******************************************************************************
+#include <stdio.h>
+static FILE uartout = {0} ;
+static int uart_putchar (char c, FILE *stream) {
+    Serial.write(c) ;
+    return 0 ;
+}  
+
+//*******************************************************************************
 //*                               Static variables                              *
 //*******************************************************************************
 //
-// Screen buffer. For the moment just filled with a static picture.
+// Screen buffer. Two pages for page flipping support
 //
 
 uint8_t Screen [2][LED_HALF * 2];
@@ -93,10 +104,16 @@ volatile byte Flags;
 #define FLAGS_FLIP_PAGE         0x02    // Set for flipping screens
 #define FLAGS_PAGE_DISPLAYED    0x01    // Do not use - interrupt routine uses that
 
-// to keep track about what screen buffer is displayed
+// Used to keep track about what screen buffer is displayed
 #define ScreenPageDisplayed()  (Flags & FLAGS_PAGE_DISPLAYED)
 #define ScreenPageInactive()   (~Flags & FLAGS_PAGE_DISPLAYED)
 
+//
+// Defines the brightness of the display, 0 is most bright, 8 is darkest.
+// Higher values could lead to picture flickering etc.
+//
+
+byte LedPwm = 4;
 
 //*******************************************************************************
 //*                          Fonts and bitmaps                                  *
@@ -107,22 +124,21 @@ volatile byte Flags;
 // The fonts are in program memory space so they have to be accessed in a special way!
 //
 
-const byte font_8x6[96 * 8] PROGMEM = {
+const byte Font8x6[96 * 8] PROGMEM = {
 #include "FN6X8_reduced.h"
 };
 
-#define FontByte(Index) pgm_read_byte (((PGM_P) font_8x6) + Index)
+#define Font8Byte(Index) pgm_read_byte (((PGM_P) Font8x6) + Index)
 
 const byte BitmapAda_P[] PROGMEM = {
-#include "BitmapAda.h"
+//#include "BitmapAda.h"
 };
-
 
 //*******************************************************************************
 //*                              Interrupt handler                              *
 //*******************************************************************************
 //
-// Activated every 0.5ms, uses timer1.
+// Activated every 0.125ms, uses timer1.
 // At the moment only updates the LED matrix.
 //
 
@@ -152,19 +168,24 @@ void LedScan (void) {
   uint8_t i, b, LedByteU, LedByteL;
   uint8_t *LedByteUPtr, *LedByteLPtr;
   static uint8_t LedRow = 0;         // Active row - the one that's just displayed
+  static byte LedPwmCnt = 0;
 
-  //  LedRow++;
-  //  
-  //  if (LedRow >= 32) {
-  //    LedRow = 0;
-  //  } else if (LedRow > 15) {
-  //    LedOeDisable ();
-  //    return;  
-  //  }
-  //  
+  //
+  //  Handle display dimming - this is done for every scan line by disabling the display for next LedPwm interrupts
+  //
+  
+  if (LedPwmCnt > 0) {
+    LedOeDisable ();
+    LedPwmCnt --;
+    return;
+  }
+  
+  LedPwmCnt = LedPwm;
 
-  LedOeDisable ();
-
+  //
+  // Get the scan lines for both upper and lower half of the screen and bit bang it into the display buffer (74HC565).
+  // 
+  
   LedClkLow ();
   LedByteUPtr = Screen[ScreenPageDisplayed()] + LedRow * 8;
   LedByteLPtr = LedByteUPtr + LED_HALF;
@@ -183,10 +204,17 @@ void LedScan (void) {
     }
   }
 
+  // 
+  // The screen line data are shifted into the 74HC565 internal buffers, now select the correct row (1..16) 
+  // and write the data into output buffers
+  //
+  
+  LedOeDisable ();
   LedSetRow (LedRow);
   LedStrobeLow ();
   LedStrobeHigh ();
   LedStrobeLow ();
+  LedOeEnable ();
 
   LedRow = (LedRow + 1) & 0x0F;
 
@@ -200,7 +228,6 @@ void LedScan (void) {
     Flags &= ~FLAGS_FLIP_PAGE;      // and clear the flag to signal the page was flipped
   }
 
-  LedOeEnable ();
 }
 
 //
@@ -326,6 +353,8 @@ void LedBitmap (uint8_t X, uint8_t Y, uint8_t XSize, uint8_t YSize, uint8_t *Bit
 void LedBitmap_P (uint8_t X, uint8_t Y, uint8_t XSize, uint8_t YSize, PGM_P Bitmap) {
   uint8_t x, y;
   uint8_t Pixel, XSizeBytes;
+  
+  printf ("LedBitmap_P = %4x\n", (uint16_t) Bitmap);
 
   //
   // Test input parameters and either crop them or bail out completely.
@@ -364,25 +393,26 @@ void LedBitmap_P (uint8_t X, uint8_t Y, uint8_t XSize, uint8_t YSize, PGM_P Bitm
   }
 }
 
-//
-// Draws a character at specified coordinates x, y. 
+//*******************************************************************************
+//*                            Text support functions                           *
+//*******************************************************************************
+// Draws a character / string of Font8x6 at specified coordinates x, y. 
 // Assumes first valid character to be ' ', draws garbage for anything below ' '
 //
 
-void PutChar(uint8_t x, uint8_t y, byte c) {
+void PutChar8 (uint8_t x, uint8_t y, byte c) {
 
-  LedBitmap_P (x, y, 6, 8, (PGM_P) (font_8x6 + 8 * (c - ' ')));
+  LedBitmap_P (x, y, 6, 8, (PGM_P) (Font8x6 + 8 * (c - ' ')));
 }
 
-const byte Sprite_P [] PROGMEM = {
-  0x70,		// .XXX....
-  0x88,		// X...X...
-  0x08,		// ....X...
-  0x30,		// ..XX....
-  0x20,		// ..X.....
-  0x00,		// ........
-  0x20,		// ..X.....
-}; 
+void PutString8 (uint8_t x, uint8_t y, const char *s) {
+  
+  while (*s != 0) {
+    LedBitmap_P (x, y, 6, 8, (PGM_P) (Font8x6 + 8 * (*s - ' ')));
+    s++;
+    x += 6;
+  }
+}
 
 //*******************************************************************************
 //*                            Arduino setup method                             *
@@ -396,18 +426,34 @@ void setup () {
   LedConfig ();
 
   //
-  // Set timer1 interrupt at 2 kHz
+  // Set timer1 interrupt at relatively quick rate (8kHz) to help with PWM dimming
   //
 
   TCCR1A = 0;
   TCCR1B = 0;
   TCNT1  = 0;
-  OCR1A = 8000 - 1;       
+  OCR1A = 2000 - 1;       
   TCCR1B |= (1 << WGM12);
-  TCCR1B |= (1 << CS10);  
+  TCCR1B |= (1 << CS10);  // No prescaler
   TIMSK1 |= (1 << OCIE1A);
 
-  //  LedBitmap_P (0, 0, 64, 32, (PGM_P) BitmapAda_P);
+  // fill in the UART file descriptor with pointer to writer.
+  fdev_setup_stream (&uartout, uart_putchar, NULL, _FDEV_SETUP_WRITE);
+  // The uart is the standard output device STDOUT.
+  stdout = &uartout ; 
+
+  //
+  // Display name and copyright
+  // 
+  
+  LedPwm = 0;
+  LedClear ();
+  PutString8 (16, 0, "F3-75");
+  PutString8 (14, 8, "Matrix");
+  PutString8 (8, 16, "(c) 2014");
+  PutString8 (16, 24, "Kubik");
+
+  Flags |= FLAGS_FLIP_PAGE;
 }
 
 //*******************************************************************************
@@ -415,18 +461,8 @@ void setup () {
 //*******************************************************************************
 
 void loop () {
-  int i;
 
-  //  for (i = 0; i < 24; i++) {
-  //    LedClear ();
-  //    LedBitmap_P (i, i, 6, 7, (PGM_P) Sprite_P);
-  //    Flags |= FLAGS_FLIP_PAGE;
-  //    delay (100);
-  //  }
-
-  LedClear ();
-  LedBitmap_P (0, 0, 64, 32, (PGM_P) BitmapAda_P);
-  Flags |= FLAGS_FLIP_PAGE;
-  delay (100);
+  delay (1000);
+  
 }
 
