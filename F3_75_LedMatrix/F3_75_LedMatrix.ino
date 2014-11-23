@@ -140,8 +140,16 @@ const byte Font8x6[96 * 8] PROGMEM = {
 
 // #define Font8Byte(Index) pgm_read_byte (((PGM_P) Font8x6) + Index)
 
+const byte Font10x20[96 * 10 * 4] PROGMEM = {
+//#include "F10x20.h"
+};
+
 const byte Font8x14[256 * 8 * 2] PROGMEM = {
-#include "Bold8x14.h"
+//#include "Bold8x14.h"
+};
+
+const byte FontU32b[96 * 64] PROGMEM = {
+#include "ter_u32b.h"
 };
 
 const byte BitmapAda_P[] PROGMEM = {
@@ -513,15 +521,18 @@ void PutString8 (uint8_t x, uint8_t y, const char *s) {
 
 void PutChar14 (uint8_t x, uint8_t y, byte c) {
 
-  LedBitmap_P (x, y, 8, 14, (PGM_P) (Font8x14 + 14 * c));
+//  LedBitmap_P (x, y, 8, 14, (PGM_P) (Font8x14 + 14 * c));
 }
 
+void PutChar20 (uint8_t x, uint8_t y, byte c) {
 
-const byte Sprite_p[] PROGMEM = {
-  0x00, 0x00, 0x1F, 0x20, 0x29, 0x21, 0x21, 0x29, 0x20, 0x1F, 0xC0, 0x20, 0x20, 0xA0,
-};
+  LedBitmap_P (x, y, 10, 20, (PGM_P) (Font10x20 + 40 * c));
+}
 
+void PutChar32 (uint8_t x, uint8_t y, byte c) {
 
+  LedBitmap_P (x, y, 14, 20, (PGM_P) (FontU32b + 40 * c));
+}
 
 //*******************************************************************************
 //*                            Arduino setup method                             *
@@ -640,26 +651,40 @@ void loop () {
   //
 
   LedClear ();
+//  if (hour () > 9) {
+//    PutChar8 (12 + 1, 2, (hour () / 10) + '0');
+//    PutChar14 (5, 20, (hour () / 10) + '0');
+//  }
+
+//  PutChar8 (12 + 7, 2, (hour () % 10) + '0');
+//  PutChar8 (12 + 11, 2, ':');
+//  PutChar8 (12 + 15, 2, (minute () / 10) + '0');
+//  PutChar8 (12 + 21, 2, (minute () % 10) + '0');
+//  PutChar8 (12 + 25, 2, ':');
+//  PutChar8 (12 + 29, 2, (second () / 10) + '0');
+//  PutChar8 (12 + 35, 2, (second () % 10) + '0');
+
+//  PutChar14 (13, 20, (hour () % 10) + '0');
+//  PutChar14 (19, 20, ':');
+//  PutChar14 (25, 20, (minute () / 10) + '0');
+//  PutChar14 (33, 20, (minute () % 10) + '0');
+//  PutChar14 (39, 20, ':');
+//  PutChar14 (45, 20, (second () / 10) + '0');
+//  PutChar14 (53, 20, (second () % 10) + '0');
+
   if (hour () > 9) {
-    PutChar8 (12 + 1, 2, (hour () / 10) + '0');
-    PutChar14 (5, 20, (hour () / 10) + '0');
+    PutChar32 (0, 5, (hour () / 10));
   }
 
-  PutChar8 (12 + 7, 2, (hour () % 10) + '0');
-  PutChar8 (12 + 11, 2, ':');
-  PutChar8 (12 + 15, 2, (minute () / 10) + '0');
-  PutChar8 (12 + 21, 2, (minute () % 10) + '0');
-  PutChar8 (12 + 25, 2, ':');
-  PutChar8 (12 + 29, 2, (second () / 10) + '0');
-  PutChar8 (12 + 35, 2, (second () % 10) + '0');
+  PutChar32 (15, 5, (hour () % 10));
+  if (second () & 0x01) {
+    PutChar8 (30, 10, ':');
+  }
+  PutChar32 (35, 5, (minute () / 10));
+  PutChar32 (50, 5, (minute () % 10));
 
-  PutChar14 (13, 20, (hour () % 10) + '0');
-  PutChar14 (19, 20, ':');
-  PutChar14 (25, 20, (minute () / 10) + '0');
-  PutChar14 (33, 20, (minute () % 10) + '0');
-  PutChar14 (39, 20, ':');
-  PutChar14 (45, 20, (second () / 10) + '0');
-  PutChar14 (53, 20, (second () % 10) + '0');
+
+//  PutChar32 (0, 00, (second () % 10) + '0' - ' ');
 
   Flags |= FLAGS_FLIP_PAGE;
 }
