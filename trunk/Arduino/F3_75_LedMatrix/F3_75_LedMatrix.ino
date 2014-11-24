@@ -149,11 +149,15 @@ const byte Font8x14[256 * 8 * 2] PROGMEM = {
 };
 
 const byte FontU32b[96 * 64] PROGMEM = {
-#include "ter_u32b.h"
+//#include "ter_u32b.h"
 };
 
 const byte BitmapAda_P[] PROGMEM = {
 //#include "BitmapAda.h"
+};
+
+const byte Font4[96 * 4] PROGMEM = {
+#include "Font4.h"
 };
 
 //*******************************************************************************
@@ -534,6 +538,20 @@ void PutChar32 (uint8_t x, uint8_t y, byte c) {
   LedBitmap_P (x, y, 14, 20, (PGM_P) (FontU32b + 40 * c));
 }
 
+void PutChar4 (uint8_t x, uint8_t y, byte c) {
+
+  LedBitmap_P (x, y, 4, 4, (PGM_P) (Font4 + 4 * (c - ' ')));
+}
+
+void PutString4 (uint8_t x, uint8_t y, const char *s) {
+  
+  while (*s != 0) {
+    LedBitmap_P (x, y, 4, 4, (PGM_P) (Font4 + 4 * (*s - ' ')));
+    s++;
+    x += 4;
+  }
+}
+
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //*******************************************************************************
@@ -672,17 +690,18 @@ void loop () {
 //  PutChar14 (45, 20, (second () / 10) + '0');
 //  PutChar14 (53, 20, (second () % 10) + '0');
 
-  if (hour () > 9) {
-    PutChar32 (0, 5, (hour () / 10));
-  }
+//  if (hour () > 9) {
+//    PutChar32 (0, 5, (hour () / 10));
+//  }
+//
+//  PutChar32 (15, 5, (hour () % 10));
+//  if (second () & 0x01) {
+//    PutChar8 (30, 10, ':');
+//  }
+//  PutChar32 (35, 5, (minute () / 10));
+//  PutChar32 (50, 5, (minute () % 10));
 
-  PutChar32 (15, 5, (hour () % 10));
-  if (second () & 0x01) {
-    PutChar8 (30, 10, ':');
-  }
-  PutChar32 (35, 5, (minute () / 10));
-  PutChar32 (50, 5, (minute () % 10));
-
+  PutString4 (0, 0, "Hello, Dolly!");
 
 //  PutChar32 (0, 00, (second () % 10) + '0' - ' ');
 
