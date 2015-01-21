@@ -7,16 +7,19 @@
 //* Processor:  Arduino Pro Mini 3.3V/ 8 or 16MHz
 //* Author      Date       Comment
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-//* Kubik       14.1.2013 First version, just basic code for HW tests
+//* Kubik       14.1.2015 First version, just basic code for HW tests
+//* Kubik       20.1.2015 Added and polished the sensor support
 //*******************************************************************************
 
 //*******************************************************************************
 //*                            HW details                                       *
 //*******************************************************************************
 // Standard NRF24L01+ module (eBay)
+// One DS1820 style sensor
 //
 // Used pins:
-//  NRF24L01+       SPI + 9, 10
+//  NRF24L01+   SPI + 9, 10
+//  DS1820		8
 
 //*******************************************************************************
 //*                           Includes and defines                              *
@@ -36,14 +39,14 @@
 #include <EEPROM.h>
 
 #define THIS_NODE_DEFAULT_ADDRESS 05      // Address of our node in Octal format - will be used if EEPROM isn't valid
-#define THIS_NODE_DEFAULT_ID "TempNode"   // Default node ID, used when EEPROM isn't valid
+#define THIS_NODE_DEFAULT_ID "TempNode  " // Default node ID, used when EEPROM isn't valid
 
-#define F_DEFAULTS 0x8000
+#define F_DEFAULTS 0x0000
 
 typedef struct {
   uint32_t Crc;
   uint16_t Header;
-  char Id[8];
+  char Id[NODE_ID_SIZE];
   uint16_t NodeAddress;
   uint16_t Flags;
 } Eeprom_t;
@@ -69,7 +72,6 @@ PayloadId_t PayloadId;
 OneWire Sensor (8);            // on pin 7 (a 4.7K resistor is necessary)
 byte SensorAddress[8];
 byte SensorType; 
-#define SENSOR_POWER_PIN 7
 
 //
 // EEPROM variables
@@ -177,7 +179,7 @@ bool EepromRead (void) {
   #define DebugOwTempln(...)
 #endif 
 
-int SensorRead (void) {
+uint16_t SensorRead (void) {
   byte SensorData[12];
   byte i;
   int16_t Raw;
@@ -218,40 +220,11 @@ int SensorRead (void) {
     //
   }
 
-  return (Raw + 8) >> 4; 
+  return (Raw * 5 + 4) / 8; 
 }
 
-//*******************************************************************************
-//*                                 RF24 support                                *
-//*******************************************************************************
-
-#if DEBUG_RF24
-  #define DebugRf24(...) {Serial.print(__VA_ARGS__); delay (50);}
-  #define DebugRf24ln(...) {Serial.println(__VA_ARGS__); delay (50);}
-#else
-  #define DebugRf24(...)
-  #define DebugRf24ln(...)
-#endif 
-  
-//*******************************************************************************
-//*                            Arduino setup method                             *
-//******************************************************************************* 
-
-void setup () {
+void DS1820Init (void) {
   byte i;
-  
-#if DEBUG || DEBUG_OW_TEMP || DEBUG_RF24
-  Serial.begin (57600);
-  Serial.println (F("[RF24Node]"));
-#endif
-
-  //
-  // OneWire init, search for sensor
-  //
-  
-  pinMode (SENSOR_POWER_PIN, OUTPUT);
-  digitalWrite (SENSOR_POWER_PIN, HIGH);
-  delay (1000);
   
   if (!Sensor.search (SensorAddress)) {
     DebugOwTempln (F("No sensor found, gone sleeping"));
@@ -299,7 +272,34 @@ void setup () {
   } else {
     Debugln (F("EEPROM read failed, default address 05 assigned"));
   }    
+}
 
+//*******************************************************************************
+//*                                 RF24 support                                *
+//*******************************************************************************
+
+#if DEBUG_RF24
+  #define DebugRf24(...) {Serial.print(__VA_ARGS__); delay (50);}
+  #define DebugRf24ln(...) {Serial.println(__VA_ARGS__); delay (50);}
+#else
+  #define DebugRf24(...)
+  #define DebugRf24ln(...)
+#endif 
+  
+//*******************************************************************************
+//*                            Arduino setup method                             *
+//******************************************************************************* 
+
+void setup () {
+  byte i;
+  
+#if DEBUG || DEBUG_OW_TEMP || DEBUG_RF24
+  Serial.begin (57600);
+  Serial.println (F("[RF24Node]"));
+#endif
+
+  DS1820Init ();
+  
   //
   // RF24Network init
   //
@@ -326,9 +326,7 @@ void loop () {
   Temperature = SensorRead ();
   PayloadTemperature.BattLevel = 0xFF;          // No batt level measurement
   PayloadTemperature.Temperature[0] = (int8_t) Temperature;
-  PayloadTemperature.Temperature[1] = 0xFF;
-  PayloadTemperature.Temperature[2] = 0xFF;
-  PayloadTemperature.Temperature[3] = 0xFF;
+  PayloadTemperature.Temperature[1] = 0xFFFF;
 
   Network.update ();                 // Check the network regularly
   RF24NetworkHeader Header (0, RF24_TYPE_TEMP);   
