@@ -9,6 +9,7 @@
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       14.1.2015 First version, just basic code for HW tests
 //* Kubik       20.1.2015 Added and polished the sensor support
+//* Kubik       22.1.2015 Added battery support
 //*******************************************************************************
 
 //*******************************************************************************
@@ -40,6 +41,10 @@
 
 #define THIS_NODE_DEFAULT_ADDRESS 05      // Address of our node in Octal format - will be used if EEPROM isn't valid
 #define THIS_NODE_DEFAULT_ID "TempNode  " // Default node ID, used when EEPROM isn't valid
+#define PIN_BATTERY_ANALOG A0
+#define PIN_BATTERY_MEASURE 15
+#define BATTERY_K 480L                    // Battery conversion constant
+#define BATTERY_TYPE F_BATTERY_NONE
 
 #define F_DEFAULTS 0x0000
 
@@ -77,7 +82,14 @@ byte SensorType;
 // EEPROM variables
 //
 
-Eeprom_t EepromContent;
+Eeprom_t Eeprom;
+
+//
+// Other variables
+//
+
+uint16_t BattLevelAverage;
+uint16_t Flags = 0;
 
 //*******************************************************************************
 //*                          Debug and assert support                           *
@@ -140,9 +152,9 @@ uint32_t CrcBuffer (byte *Buffer, byte Size) {
 //*******************************************************************************
 
 //
-// Read EEPROM from address 0 to EepromContent. 
+// Read EEPROM from address 0 to Eeprom. 
 // Check the CRC, compare it with stored CRC.
-// If it does not match, load EepromContent with defaults.
+// If it does not match, load Eeprom with defaults.
 //
 
 bool EepromRead (void) {
@@ -150,18 +162,18 @@ bool EepromRead (void) {
   byte *EepromPtr;
   uint32_t Crc;
 
-  EepromPtr = (byte *) &EepromContent;
+  EepromPtr = (byte *) &Eeprom;
   for (i = 0; i < sizeof (Eeprom_t); i++) {
     *EepromPtr++ = EEPROM.read (i);
   }
   
-  EepromPtr = (byte *) &EepromContent;
+  EepromPtr = (byte *) &Eeprom;
   Crc = CrcBuffer (EepromPtr + 4, sizeof (Eeprom_t) - 4);    // Do not include stored CRC into CRC calculation
-  if (Crc != EepromContent.Crc) {
-    EepromContent.Flags = F_DEFAULTS;
-    EepromContent.Header = 'ID';
-    EepromContent.NodeAddress = THIS_NODE_DEFAULT_ADDRESS;
-    memcpy (EepromContent.Id, THIS_NODE_DEFAULT_ID, sizeof (EepromContent.Id));
+  if (Crc != Eeprom.Crc) {
+    Eeprom.Flags = F_DEFAULTS;
+    Eeprom.Header = 'ID';
+    Eeprom.NodeAddress = THIS_NODE_DEFAULT_ADDRESS;
+    memcpy (Eeprom.Id, THIS_NODE_DEFAULT_ID, sizeof (Eeprom.Id));
     return false;
   }
   return true;
@@ -248,14 +260,17 @@ void DS1820Init (void) {
     case 0x10:
       DebugOwTempln (F("  Chip = DS18S20"));
       SensorType = 1;
+      Flags = (Flags & ~F_SENSOR_MASK) | F_SENSOR_DS1820;
       break;
     case 0x28:
       DebugOwTempln (F("  Chip = DS18B20"));
       SensorType = 0;
+      Flags = (Flags & ~F_SENSOR_MASK) | F_SENSOR_DS1820;
       break;
     case 0x22:
       DebugOwTempln (F("  Chip = DS1822"));
       SensorType = 0;
+      Flags = (Flags & ~F_SENSOR_MASK) | F_SENSOR_DS1822;
       break;
     default:
       DebugOwTempln (F("Device is not a DS18x20 family device."));
@@ -268,7 +283,7 @@ void DS1820Init (void) {
   
   if (EepromRead ()) {
     Debug (F("EEPROM read OK, address "));
-    Debugln (EepromContent.NodeAddress);
+    Debugln (Eeprom.NodeAddress);
   } else {
     Debugln (F("EEPROM read failed, default address 05 assigned"));
   }    
@@ -306,7 +321,20 @@ void setup () {
   
   SPI.begin ();
   Radio.begin ();
-  Network.begin (RF24_CHANNEL, EepromContent.NodeAddress);
+  Network.begin (RF24_CHANNEL, Eeprom.NodeAddress);
+
+  //
+  // Prepare battery measurement feature
+  //
+  
+  analogReference (INTERNAL);
+  pinMode (PIN_BATTERY_ANALOG, INPUT);
+  pinMode (PIN_BATTERY_MEASURE, OUTPUT);
+  digitalWrite (PIN_BATTERY_MEASURE, LOW);
+  delay (10);
+  BattLevelAverage = analogRead (PIN_BATTERY_ANALOG);
+//  delay (1000);
+  BattLevelAverage = analogRead (PIN_BATTERY_ANALOG);
 }
 
 //*******************************************************************************
@@ -316,22 +344,68 @@ void setup () {
 void loop () {
   int Temperature; 
   bool Ok;
+  uint32_t tmp;
+  uint16_t BattLevel;
 
   //
-  // Things that have to be done every loop pass
+  // Enable the pin as output - that grounds the voltage divider
+  //
+
+  pinMode (PIN_BATTERY_MEASURE, OUTPUT);
+  
+  //
+  // Check the network regularly - in fact we don't expect any incoming packets, but just in case...
   //
   
-  Network.update ();                 // Check the network regularly
+  Network.update ();                 
   
+  //
+  // Measure the battery level. Use running average of last 16 values
+  //
+  
+  BattLevelAverage = ((BattLevelAverage * 15) + analogRead (PIN_BATTERY_ANALOG)) >> 4;
+  pinMode (PIN_BATTERY_MEASURE, INPUT);
+  Debug ("Battery level average ");
+  Debugln (BattLevelAverage);
+  
+  //
+  // We'll be sending the battery voltage in tens of mV. 
+  // To calculate the voltage, first measure the resistors, one is around 1MOhm, the other around 0.33MOhm.
+  // Calculate constant K, where K = R2 / (R1 + R2). K should be around 4.
+  // In other words, Vraw = K * Va, where Va is the voltage measured on pin A0.
+  // Then, calculate the value 100 * Vr * K, where
+  //  - 100 means we want tens of milivolts, and there's 100 tens of milivolts in one volt
+  //  - Vr is Arduino reference voltage, typically 1.1V
+  //  - K is constant above
+  // Resulting number will be something around 450. 
+  // To get the RAW voltage, multiply the reading from the ADC by that number, and divide by 1024 (resolution of ADC)
+  // I additionally deduct 200 as I report voltage over 2V
+  //
+  
+  tmp = ((uint32_t) BattLevelAverage * BATTERY_K + 512) >> 10;
+  if (tmp < 200) {
+    BattLevel = 0;
+    Eeprom.Flags != F_BATTERY_DEAD;
+  } else if (tmp > (200 + 255)) {
+    BattLevel = 255;
+  } else {
+    BattLevel = (uint8_t) (tmp - 200);
+  }
+  
+  Debug ("Battery level ");
+  Debugln (BattLevel);
+    
+  //
+  // Now measure the temperature
+  //
+
   Temperature = SensorRead ();
-  PayloadTemperature.BattLevel = 0xFF;          // No batt level measurement
+  PayloadTemperature.BattLevel = BattLevel;
   PayloadTemperature.Temperature[0] = (int8_t) Temperature;
   PayloadTemperature.Temperature[1] = 0xFFFF;
 
-  Network.update ();                 // Check the network regularly
   RF24NetworkHeader Header (0, RF24_TYPE_TEMP);   
   
-  Network.update ();                 // Check the network regularly
   Ok = Network.write (Header, &PayloadTemperature, sizeof(PayloadTemperature));
   if (Ok) {
     DebugRf24ln (F("Temperature sending ok."));
@@ -339,32 +413,24 @@ void loop () {
     DebugRf24ln (F("Temperature sending failed."));
   }
   
-  LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);     
-
   //
   // Send sensor ID
   //
 
-  Network.update ();                 // Check the network regularly
-
-  PayloadId.BattLevel = 0xFF;          // No batt level measurement
-  memcpy (PayloadId.Id, EepromContent.Id, 8);
+  PayloadId.BattLevel = BattLevel;
+  memcpy (PayloadId.Id, Eeprom.Id, 8);
   PayloadId.Version = VERSION;
-  PayloadId.Flags = EepromContent.Flags;
+  PayloadId.Flags = Eeprom.Flags | BATTERY_TYPE;
   
-  Network.update ();                 // Check the network regularly
   RF24NetworkHeader HeaderId (0, RF24_TYPE_ID);   
   
-  Network.update ();                 // Check the network regularly
   Ok = Network.write (HeaderId, &PayloadId, sizeof(PayloadId));
   if (Ok) {
     DebugRf24ln(F("ID sending ok."));
   } else {
     DebugRf24ln(F("ID sending failed."));
   }
-  
-  LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);     
 
-
+  LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);
 }
 
