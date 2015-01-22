@@ -1,14 +1,32 @@
 //*******************************************************************************
+//*
+//* Arduino based RF24Network EEPROM writer (to update info on node ID and address
+//*
+//*******************************************************************************
+//* Processor:  Arduino Pro Mini 3.3V/ 8 or 16MHz
+//* Author      Date       Comment
+//*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//* Kubik       18.1.2015 First version, just basic code for HW tests
+//*******************************************************************************
+
+//*******************************************************************************
+//*                            HW details                                       *
+//*******************************************************************************
+//  No special HW
+
+//*******************************************************************************
 //*                           Includes and defines                              *
 //*******************************************************************************  
 
 #include <EEPROM.h>
 //#include "printf.h"
+#include <Rf24PacketDefine.h>
+
 
 typedef struct {
   uint32_t Crc;
   uint16_t Header;
-  char Id[8];
+  char Id[NODE_ID_SIZE];
   uint16_t NodeAddress;
   uint16_t Flags;
 } Eeprom_t;
@@ -205,7 +223,7 @@ void loop () {
 
   printf_P (PSTR("CRC     0x%8.8lx\n"), EepromContent.Crc);
   printf_P (PSTR("Header  %c%c\n"), EepromContent.Header >> 8, EepromContent.Header & 0xFF);
-  printf_P (PSTR("ID      %8.8s\n"), EepromContent.Id);
+  printf_P (PSTR("ID      %10s\n"), EepromContent.Id);
   printf_P (PSTR("Address %3.3o\n"), EepromContent.NodeAddress);
   
   printf_P (PSTR("Select (I) or (A) to modify ID or Address, or (W) to write EEPROM\n"));
@@ -219,11 +237,11 @@ void loop () {
     sscanf (Buffer, "%o", &EepromContent.NodeAddress);
   } else if ((c == 'i') || (c == 'I')) {
     memset (Buffer, ' ', sizeof Buffer);
-    printf_P (PSTR("Enter new node ID (8 characters): "));
+    printf_P (PSTR("Enter new node ID (%d characters): "), NODE_ID_SIZE);
     c = getch ();
     readSerial (Buffer);
-    memcpy (EepromContent.Id, Buffer, 8);
-    printf_P (PSTR("\nNew node ID: %8.8s\n"), EepromContent.Id);
+    memcpy (EepromContent.Id, Buffer, NODE_ID_SIZE);
+    printf_P (PSTR("\nNew node ID: %10s\n"), EepromContent.Id);
   } else if ((c == 'w') || (c == 'W')) {
     EepromPtr = (byte *) &EepromContent;
     EepromContent.Crc = CrcBuffer (EepromPtr + 4, sizeof (Eeprom_t) - 4);    // Do not include stored CRC into CRC calculation
