@@ -44,7 +44,10 @@
 #define PIN_BATTERY_ANALOG A0
 #define PIN_BATTERY_MEASURE 15
 #define BATTERY_K 480L                    // Battery conversion constant
-#define BATTERY_TYPE F_BATTERY_NONE
+#define BATTERY_TYPE F_BATTERY_NONE       // Type of the battery this node uses - NONE means net powered 
+
+#define TIME_COUNTER_TEMP 2
+#define TIME_COUNTER_ID 2
 
 #define F_DEFAULTS 0x0000
 
@@ -121,19 +124,19 @@ void Assert (void ) {
 #include <avr/pgmspace.h>
 
 static PROGMEM prog_uint32_t CrcTable[16] = {
-    0x00000000, 0x1db71064, 0x3b6e20c8, 0x26d930ac,
-    0x76dc4190, 0x6b6b51f4, 0x4db26158, 0x5005713c,
-    0xedb88320, 0xf00f9344, 0xd6d6a3e8, 0xcb61b38c,
-    0x9b64c2b0, 0x86d3d2d4, 0xa00ae278, 0xbdbdf21c
+  0x00000000, 0x1db71064, 0x3b6e20c8, 0x26d930ac,
+  0x76dc4190, 0x6b6b51f4, 0x4db26158, 0x5005713c,
+  0xedb88320, 0xf00f9344, 0xd6d6a3e8, 0xcb61b38c,
+  0x9b64c2b0, 0x86d3d2d4, 0xa00ae278, 0xbdbdf21c
 };
 
 uint32_t CrcUpdate (uint32_t Crc, uint8_t Data) {
-    byte TblIdx;
-    TblIdx = Crc ^ (Data >> (0 * 4));
-    Crc = pgm_read_dword_near(CrcTable + (TblIdx & 0x0f)) ^ (Crc >> 4);
-    TblIdx = Crc ^ (Data >> (1 * 4));
-    Crc = pgm_read_dword_near(CrcTable + (TblIdx & 0x0f)) ^ (Crc >> 4);
-    return Crc;
+  byte TblIdx;
+  TblIdx = Crc ^ (Data >> (0 * 4));
+  Crc = pgm_read_dword_near(CrcTable + (TblIdx & 0x0f)) ^ (Crc >> 4);
+  TblIdx = Crc ^ (Data >> (1 * 4));
+  Crc = pgm_read_dword_near(CrcTable + (TblIdx & 0x0f)) ^ (Crc >> 4);
+  return Crc;
 }
 
 uint32_t CrcBuffer (byte *Buffer, byte Size) {
@@ -232,6 +235,8 @@ uint16_t SensorRead (void) {
     //
   }
 
+  DebugOwTemp (F("Raw = "));
+  DebugOwTempln (Raw);
   return (Raw * 5 + 4) / 8; 
 }
 
@@ -342,10 +347,12 @@ void setup () {
 //******************************************************************************* 
 
 void loop () {
-  int Temperature; 
+  uint16_t Temperature; 
   bool Ok;
   uint32_t tmp;
   uint16_t BattLevel;
+  uint8_t TempCounter;
+  static uint8_t IdCounter = 0;
 
   //
   // Enable the pin as output - that grounds the voltage divider
@@ -379,7 +386,7 @@ void loop () {
   //  - K is constant above
   // Resulting number will be something around 450. 
   // To get the RAW voltage, multiply the reading from the ADC by that number, and divide by 1024 (resolution of ADC)
-  // I additionally deduct 200 as I report voltage over 2V
+  // I additionally deduct 200 as I report voltage over 2V to make the result fit to one byte (2V - 4.55V)
   //
   
   tmp = ((uint32_t) BattLevelAverage * BATTERY_K + 512) >> 10;
@@ -400,10 +407,13 @@ void loop () {
   //
 
   Temperature = SensorRead ();
+  Debug ("Temperature ");
+  Debugln (Temperature);
+    
   PayloadTemperature.BattLevel = BattLevel;
-  PayloadTemperature.Temperature[0] = (int8_t) Temperature;
+  PayloadTemperature.Temperature[0] = Temperature;
   PayloadTemperature.Temperature[1] = 0xFFFF;
-
+  
   RF24NetworkHeader Header (0, RF24_TYPE_TEMP);   
   
   Ok = Network.write (Header, &PayloadTemperature, sizeof(PayloadTemperature));
@@ -414,23 +424,35 @@ void loop () {
   }
   
   //
-  // Send sensor ID
+  // Send sensor ID when it's time to do - that is every TIME_COUNTER_TEMP * TIME_COUNTER_ID * 8 seconds
   //
 
-  PayloadId.BattLevel = BattLevel;
-  memcpy (PayloadId.Id, Eeprom.Id, 8);
-  PayloadId.Version = VERSION;
-  PayloadId.Flags = Eeprom.Flags | BATTERY_TYPE;
-  
-  RF24NetworkHeader HeaderId (0, RF24_TYPE_ID);   
-  
-  Ok = Network.write (HeaderId, &PayloadId, sizeof(PayloadId));
-  if (Ok) {
-    DebugRf24ln(F("ID sending ok."));
+  if (IdCounter == 0) {
+    IdCounter = TIME_COUNTER_ID;
+    
+    PayloadId.BattLevel = BattLevel;
+    memcpy (PayloadId.Id, Eeprom.Id, 8);
+    PayloadId.Version = VERSION;
+    PayloadId.Flags = Eeprom.Flags | BATTERY_TYPE;
+    
+    RF24NetworkHeader HeaderId (0, RF24_TYPE_ID);   
+    
+    Ok = Network.write (HeaderId, &PayloadId, sizeof(PayloadId));
+    if (Ok) {
+      DebugRf24ln(F("ID sending ok."));
+    } else {
+      DebugRf24ln(F("ID sending failed."));
+    }
   } else {
-    DebugRf24ln(F("ID sending failed."));
+    IdCounter--;
   }
 
-  LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);
+  //
+  // Put the node to sleep for TIME_COUNTER_TEMP * 8 seconds
+  //
+  
+  for (TempCounter = 0; TempCounter < TIME_COUNTER_TEMP; TempCounter++) {
+    LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);
+  }
 }
 
