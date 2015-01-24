@@ -56,6 +56,7 @@ typedef struct {
   uint16_t Header;
   char Id[NODE_ID_SIZE];
   uint16_t NodeAddress;
+  uint16_t BatteryCoefficient;
   uint16_t Flags;
 } Eeprom_t;
 
@@ -176,12 +177,34 @@ bool EepromRead (void) {
     Eeprom.Flags = F_DEFAULTS;
     Eeprom.Header = 'ID';
     Eeprom.NodeAddress = THIS_NODE_DEFAULT_ADDRESS;
+    Eeprom.BatteryCoefficient = BATTERY_K;
     memcpy (Eeprom.Id, THIS_NODE_DEFAULT_ID, sizeof (Eeprom.Id));
     return false;
   }
   return true;
 }
   
+//
+// Write the content of Eeprom structure to EEPROM.
+// Compute CRC and write it into the structure as well.
+//
+
+void EepromWrite (void) {
+  byte i;
+  byte *EepromPtr;
+  uint32_t Crc;
+
+  EepromPtr = (byte *) &Eeprom;
+  Crc = CrcBuffer (EepromPtr + 4, sizeof (Eeprom_t) - 4);    // Do not include stored CRC into CRC calculation
+  Eeprom.Crc = Crc;
+
+  EepromPtr = (byte *) &Eeprom;
+  for (i = 0; i < sizeof (Eeprom_t); i++) {
+    EEPROM.write (i, *EepromPtr++);
+  }
+}
+ 
+
 //*******************************************************************************
 //*                               DS1820 support                                *
 //*******************************************************************************
@@ -281,17 +304,6 @@ void DS1820Init (void) {
       DebugOwTempln (F("Device is not a DS18x20 family device."));
       Assert ();
   } 
-
-  //
-  // Read EEPROM to get the node address, ID and other stuff
-  //
-  
-  if (EepromRead ()) {
-    Debug (F("EEPROM read OK, address "));
-    Debugln (Eeprom.NodeAddress);
-  } else {
-    Debugln (F("EEPROM read failed, default address 05 assigned"));
-  }    
 }
 
 //*******************************************************************************
@@ -305,6 +317,8 @@ void DS1820Init (void) {
   #define DebugRf24(...)
   #define DebugRf24ln(...)
 #endif 
+
+#include "EepromEditor.h"
   
 //*******************************************************************************
 //*                            Arduino setup method                             *
@@ -313,12 +327,27 @@ void DS1820Init (void) {
 void setup () {
   byte i;
   
-#if DEBUG || DEBUG_OW_TEMP || DEBUG_RF24
   Serial.begin (57600);
   Serial.println (F("[RF24Node]"));
-#endif
 
+  //
+  // Read EEPROM to get the node address, ID and other stuff
+  //
+  
+  if (EepromRead ()) {
+    Debug (F("EEPROM read OK, address "));
+    Debugln (Eeprom.NodeAddress);
+  } else {
+    Debugln (F("EEPROM read failed, default address 05 assigned"));
+  }    
+
+  //
+  // Sensor init, printf and VT100 init
+  //
+  
   DS1820Init ();
+  PrintfInit ();
+  Vt100Init (); 
   
   //
   // RF24Network init
@@ -336,10 +365,12 @@ void setup () {
   pinMode (PIN_BATTERY_ANALOG, INPUT);
   pinMode (PIN_BATTERY_MEASURE, OUTPUT);
   digitalWrite (PIN_BATTERY_MEASURE, LOW);
-  delay (10);
+  delay (1000);
   BattLevelAverage = analogRead (PIN_BATTERY_ANALOG);
-//  delay (1000);
   BattLevelAverage = analogRead (PIN_BATTERY_ANALOG);
+  if (IsChar ()) {
+    EepromEditor ();
+  }
 }
 
 //*******************************************************************************
@@ -353,7 +384,7 @@ void loop () {
   uint16_t BattLevel;
   uint8_t TempCounter;
   static uint8_t IdCounter = 0;
-
+  
   //
   // Enable the pin as output - that grounds the voltage divider
   //
@@ -389,7 +420,7 @@ void loop () {
   // I additionally deduct 200 as I report voltage over 2V to make the result fit to one byte (2V - 4.55V)
   //
   
-  tmp = ((uint32_t) BattLevelAverage * BATTERY_K + 512) >> 10;
+  tmp = ((uint32_t) BattLevelAverage * Eeprom.BatteryCoefficient + 512) >> 10;
   if (tmp < 200) {
     BattLevel = 0;
     Eeprom.Flags != F_BATTERY_DEAD;
