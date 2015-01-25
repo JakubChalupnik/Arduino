@@ -10,6 +10,7 @@
 //* Kubik       14.1.2015 First version, just basic code for HW tests
 //* Kubik       20.1.2015 Added and polished the sensor support
 //* Kubik       22.1.2015 Added battery support
+//* Kubik       25.1.2015 Secondary temperature sensor added
 //*******************************************************************************
 
 //*******************************************************************************
@@ -46,8 +47,8 @@
 #define BATTERY_K 480L                    // Battery conversion constant
 #define BATTERY_TYPE F_BATTERY_NONE       // Type of the battery this node uses - NONE means net powered 
 
-#define TIME_COUNTER_TEMP 2
-#define TIME_COUNTER_ID 2
+#define TIME_COUNTER_TEMP 1
+#define TIME_COUNTER_ID 1
 
 #define F_DEFAULTS 0x0000
 
@@ -79,8 +80,13 @@ PayloadId_t PayloadId;
 //
 
 OneWire Sensor (8);            // on pin 7 (a 4.7K resistor is necessary)
-byte SensorAddress[8];
-byte SensorType; 
+byte SensorAddress1[8];
+byte SensorAddress2[8];
+byte SensorType1; 
+byte SensorType2 = 0xFF;       // No sensor by default
+
+uint16_t Temperature1; 
+uint16_t Temperature2 = 0xFFFF; 
 
 //
 // EEPROM variables
@@ -106,7 +112,6 @@ uint16_t Flags = 0;
   #define Debug(...)
   #define Debugln(...)
 #endif 
-
 
 void Assert (void ) {
   
@@ -203,7 +208,6 @@ void EepromWrite (void) {
     EEPROM.write (i, *EepromPtr++);
   }
 }
- 
 
 //*******************************************************************************
 //*                               DS1820 support                                *
@@ -217,20 +221,24 @@ void EepromWrite (void) {
   #define DebugOwTempln(...)
 #endif 
 
-uint16_t SensorRead (void) {
+void SensorRead (void) {
   byte SensorData[12];
   byte i;
   int16_t Raw;
   byte Cfg;
   
   Sensor.reset ();
-  Sensor.select (SensorAddress);
+  Sensor.select (SensorAddress1);
   Sensor.write (0x44, 1);                          // start conversion, with parasite power on at the end
-  
+
+//  Sensor.reset ();
+//  Sensor.select (SensorAddress2);
+//  Sensor.write (0x44, 1);                          // start conversion, with parasite power on at the end
+
   LowPower.powerDown (SLEEP_1S, ADC_OFF, BOD_OFF);     
   
   Sensor.reset ();
-  Sensor.select (SensorAddress);    
+  Sensor.select (SensorAddress1);    
   Sensor.write (0xBE);                             // Read Scratchpad
 
   for ( i = 0; i < 9; i++) {                       // we need 9 bytes
@@ -238,7 +246,7 @@ uint16_t SensorRead (void) {
   }
 
   Raw = (SensorData[1] << 8) | SensorData[0];
-  if (SensorType) {
+  if (SensorType1) {
     Raw <<= 3;                                     // 9 bit resolution default
     if (SensorData [7] == 0x10) {
       Raw = (Raw & 0xFFF0) + 12 - SensorData [6];  // count remain gives full 12 bit resolution
@@ -260,13 +268,61 @@ uint16_t SensorRead (void) {
 
   DebugOwTemp (F("Raw = "));
   DebugOwTempln (Raw);
-  return (Raw * 5 + 4) / 8; 
+  Temperature1 = (Raw * 5 + 4) / 8; 
+  
+  if (SensorType2 == 0xFF) {
+    DebugOwTempln (F("No Sensor2"));
+    return;
+  }
+
+  //
+  // Second sensor (if any)
+  //
+
+  Sensor.reset ();
+  Sensor.select (SensorAddress2);
+  Sensor.write (0x44, 1);                          // start conversion, with parasite power on at the end
+  
+  LowPower.powerDown (SLEEP_1S, ADC_OFF, BOD_OFF);     
+  
+  Sensor.reset ();
+  Sensor.select (SensorAddress2);    
+  Sensor.write (0xBE);                             // Read Scratchpad
+
+  for ( i = 0; i < 9; i++) {                       // we need 9 bytes
+    SensorData[i] = Sensor.read();
+  }
+
+  Raw = (SensorData[1] << 8) | SensorData[0];
+  if (SensorType2) {
+    Raw <<= 3;                                     // 9 bit resolution default
+    if (SensorData [7] == 0x10) {
+      Raw = (Raw & 0xFFF0) + 12 - SensorData [6];  // count remain gives full 12 bit resolution
+    }
+  } else {
+    Cfg = (SensorData [4] & 0x60);
+    if (Cfg == 0x00) {
+      Raw <<= 3;                                  // 9 bit resolution, 93.75 ms
+    } else if (Cfg == 0x20) {
+      Raw <<= 2;                                 // 10 bit res, 187.5 ms
+    } else if (Cfg == 0x40) {
+      Raw <<= 1;                                 // 11 bit res, 375 ms
+    }
+    
+    //
+    // default is 12 bit resolution, 750 ms conversion time
+    //
+  }
+
+  DebugOwTemp (F("Raw2 = "));
+  DebugOwTempln (Raw);
+  Temperature2 = (Raw * 5 + 4) / 8; 
 }
 
 void DS1820Init (void) {
   byte i;
   
-  if (!Sensor.search (SensorAddress)) {
+  if (!Sensor.search (SensorAddress1)) {
     DebugOwTempln (F("No sensor found, gone sleeping"));
     Assert ();
   } 
@@ -274,34 +330,73 @@ void DS1820Init (void) {
   DebugOwTemp ("ROM =");
   for (i = 0; i < 8; i++) {
     DebugOwTemp (" ");
-    DebugOwTemp (SensorAddress [i], HEX);
+    DebugOwTemp (SensorAddress1 [i], HEX);
   }
   
   DebugOwTempln ();
-  if (OneWire::crc8 (SensorAddress, 7) != SensorAddress [7]) {
+  if (OneWire::crc8 (SensorAddress1, 7) != SensorAddress1 [7]) {
     DebugOwTempln(F("CRC is not valid!"));
     Assert ();
   }
   
   // the first ROM byte indicates which chip
-  switch (SensorAddress [0]) {
+  switch (SensorAddress1 [0]) {
     case 0x10:
       DebugOwTempln (F("  Chip = DS18S20"));
-      SensorType = 1;
+      SensorType1 = 1;
       Flags = (Flags & ~F_SENSOR_MASK) | F_SENSOR_DS1820;
       break;
     case 0x28:
       DebugOwTempln (F("  Chip = DS18B20"));
-      SensorType = 0;
+      SensorType1 = 0;
       Flags = (Flags & ~F_SENSOR_MASK) | F_SENSOR_DS1820;
       break;
     case 0x22:
       DebugOwTempln (F("  Chip = DS1822"));
-      SensorType = 0;
+      SensorType1 = 0;
       Flags = (Flags & ~F_SENSOR_MASK) | F_SENSOR_DS1822;
       break;
     default:
       DebugOwTempln (F("Device is not a DS18x20 family device."));
+      Assert ();
+  } 
+
+  //
+  // Search for second sensor
+  //
+  
+  if (!Sensor.search (SensorAddress2)) {
+    return;
+  } 
+  
+  DebugOwTemp ("ROM =");
+  for (i = 0; i < 8; i++) {
+    DebugOwTemp (" ");
+    DebugOwTemp (SensorAddress2 [i], HEX);
+  }
+  
+  DebugOwTempln ();
+  if (OneWire::crc8 (SensorAddress2, 7) != SensorAddress2 [7]) {
+    DebugOwTempln(F("CRC is not valid!"));
+    Assert ();
+  }
+  
+  // the first ROM byte indicates which chip
+  switch (SensorAddress2 [0]) {
+    case 0x10:
+      DebugOwTempln (F("  Chip2 = DS18S20"));
+      SensorType2 = 1;
+      break;
+    case 0x28:
+      DebugOwTempln (F("  Chip2 = DS18B20"));
+      SensorType2 = 0;
+      break;
+    case 0x22:
+      DebugOwTempln (F("  Chip2 = DS1822"));
+      SensorType2 = 0;
+      break;
+    default:
+      DebugOwTempln (F("Device2 is not a DS18x20 family device."));
       Assert ();
   } 
 }
@@ -378,7 +473,6 @@ void setup () {
 //******************************************************************************* 
 
 void loop () {
-  uint16_t Temperature; 
   bool Ok;
   uint32_t tmp;
   uint16_t BattLevel;
@@ -437,13 +531,15 @@ void loop () {
   // Now measure the temperature
   //
 
-  Temperature = SensorRead ();
-  Debug ("Temperature ");
-  Debugln (Temperature);
+  SensorRead ();
+  Debug ("Temperatures ");
+  Debug (Temperature1);
+  Debug (", ");
+  Debugln (Temperature2);
     
   PayloadTemperature.BattLevel = BattLevel;
-  PayloadTemperature.Temperature[0] = Temperature;
-  PayloadTemperature.Temperature[1] = 0xFFFF;
+  PayloadTemperature.Temperature[0] = Temperature1;
+  PayloadTemperature.Temperature[1] = Temperature2;
   
   RF24NetworkHeader Header (0, RF24_TYPE_TEMP);   
   
@@ -486,4 +582,3 @@ void loop () {
     LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);
   }
 }
-
