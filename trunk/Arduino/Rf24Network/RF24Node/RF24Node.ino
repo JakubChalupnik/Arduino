@@ -11,6 +11,7 @@
 //* Kubik       20.1.2015 Added and polished the sensor support
 //* Kubik       22.1.2015 Added battery support
 //* Kubik       25.1.2015 Secondary temperature sensor added
+//* Kubik        5.2.2015 Added power saving features
 //*******************************************************************************
 
 //*******************************************************************************
@@ -18,6 +19,8 @@
 //*******************************************************************************
 // Standard NRF24L01+ module (eBay)
 // One DS1820 style sensor
+// Low power Arduinos running on 8MHz internal RC with:
+//    -U lfuse:w:0xd2:m -U hfuse:w:0xde:m -U efuse:w:0xfe:m 
 //
 // Used pins:
 //  NRF24L01+   SPI + 9, 10
@@ -28,9 +31,9 @@
 //******************************************************************************* 
 
 #define VERSION 0
-#define DEBUG_OW_TEMP 1
-#define DEBUG_RF24 1
-#define DEBUG 1
+#define DEBUG_OW_TEMP 0
+#define DEBUG_RF24 0
+#define DEBUG 0
 
 #include <RF24Network.h>
 #include <RF24.h>
@@ -44,13 +47,13 @@
 #define THIS_NODE_DEFAULT_ID "TempNode  " // Default node ID, used when EEPROM isn't valid
 #define PIN_BATTERY_ANALOG A0
 #define PIN_BATTERY_MEASURE 15
-#define BATTERY_K 480L                    // Battery conversion constant
-#define BATTERY_TYPE F_BATTERY_NONE       // Type of the battery this node uses - NONE means net powered 
+#define DEFAULT_BATTERY_K 480L                    // Battery conversion constant
+#define DEFAULT_BATTERY_TYPE F_BATTERY_NONE       // Type of the battery this node uses - NONE means net powered 
 
 #define TIME_COUNTER_TEMP 1
 #define TIME_COUNTER_ID 1
 
-#define F_DEFAULTS 0x0000
+#define F_DEFAULTS DEFAULT_BATTERY_TYPE
 
 typedef struct {
   uint32_t Crc;
@@ -99,7 +102,7 @@ Eeprom_t Eeprom;
 //
 
 uint16_t BattLevelAverage;
-uint16_t Flags = 0;
+uint16_t Flags = DEFAULT_BATTERY_TYPE;
 
 //*******************************************************************************
 //*                          Debug and assert support                           *
@@ -182,7 +185,7 @@ bool EepromRead (void) {
     Eeprom.Flags = F_DEFAULTS;
     Eeprom.Header = 'ID';
     Eeprom.NodeAddress = THIS_NODE_DEFAULT_ADDRESS;
-    Eeprom.BatteryCoefficient = BATTERY_K;
+    Eeprom.BatteryCoefficient = DEFAULT_BATTERY_K;
     memcpy (Eeprom.Id, THIS_NODE_DEFAULT_ID, sizeof (Eeprom.Id));
     return false;
   }
@@ -450,7 +453,9 @@ void setup () {
   
   SPI.begin ();
   Radio.begin ();
+  Radio.powerDown ();
   Network.begin (RF24_CHANNEL, Eeprom.NodeAddress);
+  Radio.powerDown ();
 
   //
   // Prepare battery measurement feature
@@ -489,7 +494,7 @@ void loop () {
   // Check the network regularly - in fact we don't expect any incoming packets, but just in case...
   //
   
-  Network.update ();                 
+//  Network.update ();                 
   
   //
   // Measure the battery level. Use running average of last 16 values
@@ -524,7 +529,7 @@ void loop () {
     BattLevel = (uint8_t) (tmp - 200);
   }
   
-  Debug ("Battery level ");
+  Debug ("Battery voltage sent: ");
   Debugln (BattLevel);
     
   //
@@ -543,7 +548,9 @@ void loop () {
   
   RF24NetworkHeader Header (0, RF24_TYPE_TEMP);   
   
+  Radio.powerUp ();
   Ok = Network.write (Header, &PayloadTemperature, sizeof(PayloadTemperature));
+  Radio.powerDown ();
   if (Ok) {
     DebugRf24ln (F("Temperature sending ok."));
   } else {
@@ -558,13 +565,15 @@ void loop () {
     IdCounter = TIME_COUNTER_ID;
     
     PayloadId.BattLevel = BattLevel;
-    memcpy (PayloadId.Id, Eeprom.Id, 8);
+    memcpy (PayloadId.Id, Eeprom.Id, NODE_ID_SIZE);
     PayloadId.Version = VERSION;
-    PayloadId.Flags = Eeprom.Flags | BATTERY_TYPE;
+    PayloadId.Flags = Eeprom.Flags | Flags;
     
     RF24NetworkHeader HeaderId (0, RF24_TYPE_ID);   
     
+    Radio.powerUp ();
     Ok = Network.write (HeaderId, &PayloadId, sizeof(PayloadId));
+    Radio.powerDown ();
     if (Ok) {
       DebugRf24ln(F("ID sending ok."));
     } else {
