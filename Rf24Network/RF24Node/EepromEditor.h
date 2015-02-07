@@ -148,20 +148,26 @@ void DisplayEeprom (void) {
   Vt100GotoXY (3, 3);
   switch (Eeprom.Flags & F_BATTERY_MASK) {
     case F_BATTERY_NONE:
-      printf_P (PSTR("No battery"));
+      printf_P (PSTR("No batt"));
       break;
     case F_BATTERY_CR2032:
-      printf_P (PSTR("CR2032    "));
+      printf_P (PSTR("CR2032 "));
       break;
     case F_BATTERY_LIION:
-      printf_P (PSTR("LiIon     "));
+      printf_P (PSTR("LiIon  "));
+      break;
+    case F_BATTERY_SOLAR:
+      printf_P (PSTR("Solar  "));
       break;
     default:
-      printf_P (PSTR("Unknown   "));
+      printf_P (PSTR("Unknown"));
       break;
   }
 
   printf_P (PSTR("  %d"), Eeprom.BatteryCoefficient);
+
+  Vt100GotoXY (3, 4);
+  printf_P (PSTR("TempPer %2d IdPer %2d"), Eeprom.TemperaturePeriod, Eeprom.IdPeriod);
 }
 
 bool GetString (char *Buffer, int Size) {
@@ -202,6 +208,8 @@ void DisplayMenu (void) {
   Vt100GotoXY (1, 6);
   printf_P (PSTR("(A)ddress (I)dentification (B)attery (C)oef"));
   Vt100GotoXY (1, 7);
+  printf_P (PSTR("(T)empPeriod I(D)Period"));
+  Vt100GotoXY (1, 8);
   printf_P (PSTR("(W)rite (R)evert (Q)uit"));
 } 
 
@@ -218,7 +226,7 @@ void EepromEditor (void) {
   while (1) {
     Vt100ShowCursow (false);
     Vt100Cls ();  
-    DisplayFrame (1, 1, 19, 4);
+    DisplayFrame (1, 1, 25, 5);
     DisplayEeprom ();
     DisplayMenu ();
     
@@ -227,7 +235,7 @@ void EepromEditor (void) {
     switch (c) {
       case 'a':
       case 'A':
-        Vt100GotoXY (1, 8);
+        Vt100GotoXY (1, 9);
         printf_P (PSTR("New address (octal): "));
         Vt100ShowCursow (true);
         if (GetString (Buffer, 3)) { // Successfull entry finished by <Enter>
@@ -248,13 +256,16 @@ void EepromEditor (void) {
           Eeprom.Flags |= F_BATTERY_LIION;
         } else if ((Eeprom.Flags & F_BATTERY_MASK) == F_BATTERY_LIION) {
           Eeprom.Flags &= ~F_BATTERY_MASK;
+          Eeprom.Flags |= F_BATTERY_SOLAR;
+        } else if ((Eeprom.Flags & F_BATTERY_MASK) == F_BATTERY_SOLAR) {
+          Eeprom.Flags &= ~F_BATTERY_MASK;
           Eeprom.Flags |= F_BATTERY_NONE;
         }
         break;
           
       case 'i':
       case 'I':
-        Vt100GotoXY (1, 8);
+        Vt100GotoXY (1, 9);
         printf_P (PSTR("New ID (%d chars): "), NODE_ID_SIZE);
         Vt100ShowCursow (true);
         if (GetString (Buffer, NODE_ID_SIZE)) { // Successfull entry finished by <Enter>
@@ -270,13 +281,39 @@ void EepromEditor (void) {
   
       case 'c':
       case 'C':
-        Vt100GotoXY (1, 8);
+        Vt100GotoXY (1, 9);
         printf_P (PSTR("New coefficient (decimal): "));
         Vt100ShowCursow (true);
         if (GetString (Buffer, 4)) { // Successfull entry finished by <Enter>
           Buffer [NODE_ID_SIZE] = 0;
           sscanf (Buffer, "%d", &Word);
           Eeprom.BatteryCoefficient = Word;
+        }
+        Vt100ShowCursow (false);
+        break;
+  
+      case 't':
+      case 'T':
+        Vt100GotoXY (1, 9);
+        printf_P (PSTR("New temperature period (in units of 8 seconds): "));
+        Vt100ShowCursow (true);
+        if (GetString (Buffer, 4)) { // Successfull entry finished by <Enter>
+          Buffer [NODE_ID_SIZE] = 0;
+          sscanf (Buffer, "%d", &Word);
+          Eeprom.TemperaturePeriod = Word;
+        }
+        Vt100ShowCursow (false);
+        break;
+  
+      case 'd':
+      case 'D':
+        Vt100GotoXY (1, 9);
+        printf_P (PSTR("New ID period (every nth temp period): "));
+        Vt100ShowCursow (true);
+        if (GetString (Buffer, 4)) { // Successfull entry finished by <Enter>
+          Buffer [NODE_ID_SIZE] = 0;
+          sscanf (Buffer, "%d", &Word);
+          Eeprom.IdPeriod = Word;
         }
         Vt100ShowCursow (false);
         break;
