@@ -12,6 +12,7 @@
 //* Kubik       22.1.2015 Added battery support
 //* Kubik       25.1.2015 Secondary temperature sensor added
 //* Kubik        5.2.2015 Added power saving features
+//* Kubik        7.2.2015 Configurable temperature measurement and ID periods
 //*******************************************************************************
 
 //*******************************************************************************
@@ -24,7 +25,8 @@
 //
 // Used pins:
 //  NRF24L01+   SPI + 9, 10
-//  DS1820		8
+//  DS1820	8
+//  Debug pin   A5, pulled low externally
 
 //*******************************************************************************
 //*                           Includes and defines                              *
@@ -43,15 +45,16 @@
 #include <Rf24PacketDefine.h>
 #include <EEPROM.h>
 
-#define THIS_NODE_DEFAULT_ADDRESS 05      // Address of our node in Octal format - will be used if EEPROM isn't valid
-#define THIS_NODE_DEFAULT_ID "TempNode  " // Default node ID, used when EEPROM isn't valid
-#define PIN_BATTERY_ANALOG A0
-#define PIN_BATTERY_MEASURE 15
-#define DEFAULT_BATTERY_K 480L                    // Battery conversion constant
+#define DEFAULT_THIS_NODE_ADDRESS 05              // Default address of our node in Octal format - will be used if EEPROM isn't valid
+#define DEFAULT_THIS_NODE_ID "TempNode  "         // Default node ID, used when EEPROM isn't valid
+#define PIN_BATTERY_ANALOG A0                     // Analog pin used to measure the battery voltage 
+#define PIN_BATTERY_MEASURE 15                    // Pull this pin low to measure the bat. voltage (ground of the resistor divider)
+#define PIN_DEBUG A5                              // Pin used as debug output (to trigger logic analyzer etc)
+#define DEFAULT_BATTERY_K 480L                    // Default battery conversion constant (adjust according to divider used)
 #define DEFAULT_BATTERY_TYPE F_BATTERY_NONE       // Type of the battery this node uses - NONE means net powered 
 
-#define TIME_COUNTER_TEMP 1
-#define TIME_COUNTER_ID 1
+#define DEFAULT_TIME_COUNTER_TEMP 8
+#define DEFAULT_TIME_COUNTER_ID 5
 
 #define F_DEFAULTS DEFAULT_BATTERY_TYPE
 
@@ -61,6 +64,8 @@ typedef struct {
   char Id[NODE_ID_SIZE];
   uint16_t NodeAddress;
   uint16_t BatteryCoefficient;
+  uint8_t TemperaturePeriod;
+  uint8_t IdPeriod;
   uint16_t Flags;
 } Eeprom_t;
 
@@ -82,11 +87,11 @@ PayloadId_t PayloadId;
 // OneWire variables
 //
 
-OneWire Sensor (8);            // on pin 7 (a 4.7K resistor is necessary)
+OneWire Sensor (8);            // on pin 8 (a 4.7K resistor is necessary)
 byte SensorAddress1[8];
 byte SensorAddress2[8];
 byte SensorType1; 
-byte SensorType2 = 0xFF;       // No sensor by default
+byte SensorType2 = 0xFF;       // No second sensor by default
 
 uint16_t Temperature1; 
 uint16_t Temperature2 = 0xFFFF; 
@@ -184,9 +189,11 @@ bool EepromRead (void) {
   if (Crc != Eeprom.Crc) {
     Eeprom.Flags = F_DEFAULTS;
     Eeprom.Header = 'ID';
-    Eeprom.NodeAddress = THIS_NODE_DEFAULT_ADDRESS;
+    Eeprom.NodeAddress = DEFAULT_THIS_NODE_ADDRESS;
     Eeprom.BatteryCoefficient = DEFAULT_BATTERY_K;
-    memcpy (Eeprom.Id, THIS_NODE_DEFAULT_ID, sizeof (Eeprom.Id));
+    Eeprom.TemperaturePeriod = DEFAULT_TIME_COUNTER_TEMP;
+    Eeprom.IdPeriod = DEFAULT_TIME_COUNTER_ID;
+    memcpy (Eeprom.Id, DEFAULT_THIS_NODE_ID, sizeof (Eeprom.Id));
     return false;
   }
   return true;
@@ -234,11 +241,9 @@ void SensorRead (void) {
   Sensor.select (SensorAddress1);
   Sensor.write (0x44, 1);                          // start conversion, with parasite power on at the end
 
-//  Sensor.reset ();
-//  Sensor.select (SensorAddress2);
-//  Sensor.write (0x44, 1);                          // start conversion, with parasite power on at the end
-
+  digitalWrite (PIN_DEBUG, LOW);
   LowPower.powerDown (SLEEP_1S, ADC_OFF, BOD_OFF);     
+  digitalWrite (PIN_DEBUG, HIGH);
   
   Sensor.reset ();
   Sensor.select (SensorAddress1);    
@@ -286,7 +291,9 @@ void SensorRead (void) {
   Sensor.select (SensorAddress2);
   Sensor.write (0x44, 1);                          // start conversion, with parasite power on at the end
   
+  digitalWrite (PIN_DEBUG, LOW);
   LowPower.powerDown (SLEEP_1S, ADC_OFF, BOD_OFF);     
+  digitalWrite (PIN_DEBUG, HIGH);
   
   Sensor.reset ();
   Sensor.select (SensorAddress2);    
@@ -471,6 +478,13 @@ void setup () {
   if (IsChar ()) {
     EepromEditor ();
   }
+  
+  //
+  // Config debug pin
+  //
+  
+  pinMode (PIN_DEBUG, OUTPUT);
+  digitalWrite (PIN_DEBUG, HIGH);
 }
 
 //*******************************************************************************
@@ -562,7 +576,7 @@ void loop () {
   //
 
   if (IdCounter == 0) {
-    IdCounter = TIME_COUNTER_ID;
+    IdCounter = Eeprom.IdPeriod;
     
     PayloadId.BattLevel = BattLevel;
     memcpy (PayloadId.Id, Eeprom.Id, NODE_ID_SIZE);
@@ -584,10 +598,12 @@ void loop () {
   }
 
   //
-  // Put the node to sleep for TIME_COUNTER_TEMP * 8 seconds
+  // Put the node to sleep for TemperaturePeriod * 8 seconds
   //
   
-  for (TempCounter = 0; TempCounter < TIME_COUNTER_TEMP; TempCounter++) {
+  for (TempCounter = 0; TempCounter < Eeprom.TemperaturePeriod; TempCounter++) {
+    digitalWrite (PIN_DEBUG, LOW);
     LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);
+    digitalWrite (PIN_DEBUG, HIGH);
   }
 }
