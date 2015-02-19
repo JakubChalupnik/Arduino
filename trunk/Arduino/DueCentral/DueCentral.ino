@@ -46,6 +46,7 @@
 #define NET_CS   46
 
 #define STATIC 0  // set to 1 to disable DHCP (adjust myip/gwip values below)
+#define DEBUG
 
 //*******************************************************************************
 //*                               Static variables                              *
@@ -58,20 +59,18 @@
 ILI9341_due tft = ILI9341_due (TFT_CS, TFT_DC);
 
 //
-// Network related
+// Network related. 
+// Static addresses are used either when STATIC is enabled, or DHCP fails
+// Ethernet MAC address must be unique on the network
+// buffer is used as tcp/ip send and receive buffer 
 //
 
-#if STATIC
-// ethernet interface ip address
 static byte myip[] = {192, 168, 10, 200};
-// gateway ip address
 static byte gwip[] = {192, 168, 10, 1};
-#endif 
 
-// ethernet mac address - must be unique on your network
 static byte mymac[] = { 0x74,0x69,0x69,0x33,0x30,0x31 };
 
-byte Ethernet::buffer[500]; // tcp/ip send and receive buffer 
+byte Ethernet::buffer[500]; 
 
 const char page[] PROGMEM =
 "HTTP/1.0 503 Service Unavailable\r\n"
@@ -92,11 +91,19 @@ const char page[] PROGMEM =
 "</html>"
 ; 
 
+//
+// Globally available and used flags
+//
+
+uint16_t Flags = 0;
+#define F_ETHERNET 0x0001    // Ethernet controller operational
+
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //******************************************************************************* 
 
 void setup () {
+  char buff [64];
   
   //
   // Initialize pins used for resets of various peripherals, and reset all of them
@@ -118,42 +125,46 @@ void setup () {
   Serial.begin (57600);
   while (!Serial); 
   Serial.println ("[Arduino Due Central Node!]"); 
- 
-  tft.begin ();
-  
-  
-  if (ether.begin (sizeof Ethernet::buffer, mymac, NET_CS) == 0) {
-    Serial.println ("Failed to access Ethernet controller");
-  }
-  
-#if STATIC
-  ether.staticSetup (myip, gwip);
-#else
-  if (!ether.dhcpSetup ()) {
-    Serial.println ("DHCP failed");
-  } else {
-    ether.printIp ("IP:  ", ether.myip);
-    ether.printIp ("GW:  ", ether.gwip);  
-    ether.printIp ("DNS: ", ether.dnsip);   
-  }
-#endif
 
   //
-  // Print basic info
+  //  Initialize the display, set small text and red color for status messages
   //
   
+  tft.begin ();
   tft.fillScreen (ILI9341_BLACK);
   tft.setCursor (0, 0);
-  tft.setTextColor (ILI9341_WHITE);  
+  tft.setTextColor (ILI9341_RED);  
   tft.setTextSize (1);
   
-  char buff [64];
-  sprintf (buff, "IP = %d.%d.%d.%d", ether.myip[0], ether.myip[1], ether.myip[2], ether.myip[3]);
-  tft.println (buff);
-  sprintf (buff, "GW = %d.%d.%d.%d", ether.gwip[0], ether.gwip[1], ether.gwip[2], ether.gwip[3]);
-  tft.println (buff);
-  sprintf (buff, "DNS = %d.%d.%d.%d", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
-  tft.println (buff);
+  //
+  // Initialize network
+  //
+  
+  if (ether.begin (sizeof Ethernet::buffer, mymac, NET_CS) == 0) {
+    tft.println ("Failed to access Ethernet controller");
+  } else {
+    tft.println ("Ethernet controller initialized");
+    Flags |= F_ETHERNET;
+  }
+
+  if (Flags | F_ETHERNET) {  
+    #if STATIC
+      ether.staticSetup (myip, gwip);
+    #else
+      if (!ether.dhcpSetup ()) {
+        tft.println ("DHCP failed, using static IP");
+        ether.staticSetup (myip, gwip);
+      }
+    #endif
+  
+    sprintf (buff, "IP = %d.%d.%d.%d", ether.myip[0], ether.myip[1], ether.myip[2], ether.myip[3]);
+    tft.println (buff);
+    sprintf (buff, "GW = %d.%d.%d.%d", ether.gwip[0], ether.gwip[1], ether.gwip[2], ether.gwip[3]);
+    tft.println (buff);
+    sprintf (buff, "DNS = %d.%d.%d.%d", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
+    tft.println (buff);
+  }
+  
 }
 
 //*******************************************************************************
@@ -161,9 +172,12 @@ void setup () {
 //******************************************************************************* 
 
 void loop(){
-  // wait for an incoming TCP packet, but ignore its contents
-  if (ether.packetLoop(ether.packetReceive())) {
-    memcpy_P(ether.tcpOffset(), page, sizeof page);
-    ether.httpServerReply(sizeof page - 1);
+  
+  if (Flags | F_ETHERNET) {
+    // wait for an incoming TCP packet, but ignore its contents
+    if (ether.packetLoop(ether.packetReceive())) {
+      memcpy_P(ether.tcpOffset(), page, sizeof page);
+      ether.httpServerReply(sizeof page - 1);
+    }
   }
 } 
