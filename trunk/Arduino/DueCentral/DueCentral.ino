@@ -9,6 +9,7 @@
 //* Author      Date       Comment
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       18.2.2015 First version, just basic code for HW tests
+//* Kubik       20.2.2015 Added two RF24 modules
 //*******************************************************************************
 
 //*******************************************************************************
@@ -20,6 +21,12 @@
 //   pin 51 - DC
 //   pin 52 - CS
 //   pin 53 - RESET
+//
+//  nRF24L01+ radios: HW SPI and
+//   pin 10 - CSN 1
+//   pin 23 - CE 1
+//   pin 4  - CSN 2
+//   pin 22 - CE 2
 //
 //  ENC28J60 (partially configured within the library!):
 //   pin 50 - MISO
@@ -37,6 +44,10 @@
 #include <ILI9341_due_gText.h>
 #include <ILI9341_due.h>
 #include <EtherCard.h>
+#include <SPI.h>
+#include "RF24.h"
+#include "RF24Network.h"
+#include "Rf24PacketDefine.h"
 
 #define TFT_DC 51
 #define TFT_CS 52
@@ -45,12 +56,29 @@
 #define NET_RST  47
 #define NET_CS   46
 
+#define RF24_1_CSN 10
+#define RF24_1_CE 23
+#define RF24_2_CSN 4
+#define RF24_2_CE 22
+
 #define STATIC 0  // set to 1 to disable DHCP (adjust myip/gwip values below)
 #define DEBUG
 
 //*******************************************************************************
 //*                               Static variables                              *
 //******************************************************************************* 
+
+//
+// RF24 related
+// Radio1 is used to communicate with sensors and send out broadcasts messages 
+// for all standalone nodess that might care.
+// Radio2 is used for RF24Network
+//
+
+
+RF24 Radio1 (RF24_1_CE, RF24_1_CSN);
+RF24 Radio2 (RF24_2_CE, RF24_2_CSN);
+RF24Network Network (Radio2);   
 
 //
 // Display related
@@ -65,10 +93,10 @@ ILI9341_due tft = ILI9341_due (TFT_CS, TFT_DC);
 // buffer is used as tcp/ip send and receive buffer 
 //
 
-static byte myip[] = {192, 168, 10, 200};
-static byte gwip[] = {192, 168, 10, 1};
+static const byte myip[] = {192, 168, 10, 200};
+static const byte gwip[] = {192, 168, 10, 1};
 
-static byte mymac[] = { 0x74,0x69,0x69,0x33,0x30,0x31 };
+static const byte mymac[] = { 0x74,0x69,0x69,0x33,0x30,0x31 };
 
 byte Ethernet::buffer[500]; 
 
@@ -137,7 +165,38 @@ void setup () {
   tft.setTextSize (1);
   
   //
-  // Initialize network
+  // Initialise RF24 stuff.
+  // The first radio is used to communicate with sensors and send broadcasts.
+  // No acks here (at least for the moment), using two pipes, 
+  //  - one for receiving info from sensors
+  //  - one for sending broadcasts 
+  
+  Radio1.begin ();
+  Radio1.setPayloadSize (sizeof (PayloadRaw_t));
+  Radio1.setAutoAck (false);
+  Radio1.setPALevel (RF24_PA_HIGH);
+  Radio1.setDataRate (RF24_250KBPS);
+  Radio1.setChannel (RF24_RADIO_CHANNEL);
+  Radio1.openReadingPipe (0, RF24_SENSOR_PIPE);
+  Radio1.openWritingPipe (RF24_BROADCAST_PIPE);
+#ifdef DEBUG  
+  Serial.println ("=================================================");
+  Serial.println ("Radio1 details");
+  Radio1.printDetails ();
+#endif
+
+  Radio2.begin ();
+  Radio1.setPALevel (RF24_PA_HIGH);
+#ifdef DEBUG  
+  Serial.println ("=================================================");
+  Serial.println ("Radio2 details");
+  Radio2.printDetails ();
+#endif
+
+  Network.begin (RF24_NETWORK_CHANNEL, 000);
+
+  //
+  // Initialize Ethernet network
   //
   
   if (ether.begin (sizeof Ethernet::buffer, mymac, NET_CS) == 0) {
