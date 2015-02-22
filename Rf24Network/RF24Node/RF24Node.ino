@@ -25,7 +25,7 @@
 //
 // Used pins:
 //  NRF24L01+   SPI + 9, 10
-//  DS1820	8
+//  DS1820  8
 //  Debug pin   A5, pulled low externally
 
 //*******************************************************************************
@@ -57,6 +57,10 @@
 #define DEFAULT_TIME_COUNTER_ID 5
 
 #define F_DEFAULTS DEFAULT_BATTERY_TYPE
+
+//*******************************************************************************
+//*                           Data types                                        *
+//******************************************************************************* 
 
 typedef struct {
   uint32_t Crc;
@@ -329,6 +333,11 @@ void SensorRead (void) {
   Temperature2 = (Raw * 5 + 4) / 8; 
 }
 
+//
+// Initialize the DS18xxx sensors, look for two of them 
+// and store their addresses as SensorAddress1 and SensorAddress2
+//
+
 void DS1820Init (void) {
   byte i;
   
@@ -429,7 +438,7 @@ void DS1820Init (void) {
 //*                            Arduino setup method                             *
 //******************************************************************************* 
 
-void setup () {
+void setup(void) {
   byte i;
   
   Serial.begin (57600);
@@ -475,6 +484,11 @@ void setup () {
   delay (1000);
   BattLevelAverage = analogRead (PIN_BATTERY_ANALOG);
   BattLevelAverage = analogRead (PIN_BATTERY_ANALOG);
+
+  //
+  // If a key is pressed, go to EEPROM editor first
+  //
+  
   if (IsChar ()) {
     EepromEditor ();
   }
