@@ -62,7 +62,17 @@
 #define RF24_2_CE 22
 
 #define STATIC 0  // set to 1 to disable DHCP (adjust myip/gwip values below)
-#define DEBUG
+#define DEBUG 1
+
+#define MAX_TEMP_SENSORS 10
+
+typedef struct {
+  uint16_t Address;
+  uint8_t BattLevel;
+  uint16_t Temperature[2];
+  char Id[NODE_ID_SIZE];
+  uint16_t Flags;
+} NetworkNode_t;
 
 //*******************************************************************************
 //*                               Static variables                              *
@@ -120,11 +130,32 @@ const char page[] PROGMEM =
 ; 
 
 //
+// Arrays of all found sensors and their latest payloads
+//
+
+SensorPayloadTemperature_t TempSensors [MAX_TEMP_SENSORS];
+int TempSensorsCount = 0;
+
+//
 // Globally available and used flags
 //
 
 uint16_t Flags = 0;
 #define F_ETHERNET 0x0001    // Ethernet controller operational
+
+//*******************************************************************************
+//*                          Debug support                                      *
+//*******************************************************************************
+
+#if DEBUG
+  #define Debug(...) {Serial.print(__VA_ARGS__);}
+  #define Debugln(...) {Serial.println(__VA_ARGS__);}
+  #define Dprintf(Format, ...) {Serial.print(Format, __VA_ARGS__);}
+#else
+  #define Debug(...)
+  #define Debugln(...)
+  #define Dprintf(Format, ...)
+#endif 
 
 //*******************************************************************************
 //*                            Arduino setup method                             *
@@ -163,7 +194,7 @@ void setup () {
   tft.setCursor (0, 0);
   tft.setTextColor (ILI9341_RED);  
   tft.setTextSize (1);
-  
+
   //
   // Initialise RF24 stuff.
   // The first radio is used to communicate with sensors and send broadcasts.
@@ -172,22 +203,23 @@ void setup () {
   //  - one for sending broadcasts 
   
   Radio1.begin ();
-  Radio1.setPayloadSize (sizeof (PayloadRaw_t));
+  Radio1.setPayloadSize (sizeof (SensorPayloadTemperature_t));
   Radio1.setAutoAck (false);
   Radio1.setPALevel (RF24_PA_HIGH);
   Radio1.setDataRate (RF24_250KBPS);
   Radio1.setChannel (RF24_RADIO_CHANNEL);
-  Radio1.openReadingPipe (0, RF24_SENSOR_PIPE);
+  Radio1.openReadingPipe (1, RF24_SENSOR_PIPE);
   Radio1.openWritingPipe (RF24_BROADCAST_PIPE);
-#ifdef DEBUG  
+#if DEBUG  
   Serial.println ("=================================================");
   Serial.println ("Radio1 details");
   Radio1.printDetails ();
 #endif
+  Radio1.startListening();
 
   Radio2.begin ();
-  Radio1.setPALevel (RF24_PA_HIGH);
-#ifdef DEBUG  
+  Radio2.setPALevel (RF24_PA_HIGH);
+#if DEBUG  
   Serial.println ("=================================================");
   Serial.println ("Radio2 details");
   Radio2.printDetails ();
@@ -208,12 +240,12 @@ void setup () {
 
   if (Flags | F_ETHERNET) {  
     #if STATIC
-      ether.staticSetup (myip, gwip);
+    ether.staticSetup (myip, gwip);
     #else
-      if (!ether.dhcpSetup ()) {
-        tft.println ("DHCP failed, using static IP");
-        ether.staticSetup (myip, gwip);
-      }
+    if (!ether.dhcpSetup ()) {
+      tft.println ("DHCP failed, using static IP");
+      ether.staticSetup (myip, gwip);
+    }
     #endif
   
     sprintf (buff, "IP = %d.%d.%d.%d", ether.myip[0], ether.myip[1], ether.myip[2], ether.myip[3]);
@@ -223,20 +255,78 @@ void setup () {
     sprintf (buff, "DNS = %d.%d.%d.%d", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
     tft.println (buff);
   }
-  
 }
 
 //*******************************************************************************
 //*                              Main program loop                              *
 //******************************************************************************* 
 
-void loop(){
+void loop() {
+  SensorPayloadTemperature_t TempPayload;
+  uint8_t *p = (uint8_t *) &TempPayload;
+  int i;
+  static unsigned long LastTime = 0;
+  static char buff[64];
   
+  Network.update ();
+
   if (Flags | F_ETHERNET) {
     // wait for an incoming TCP packet, but ignore its contents
-    if (ether.packetLoop(ether.packetReceive())) {
-      memcpy_P(ether.tcpOffset(), page, sizeof page);
-      ether.httpServerReply(sizeof page - 1);
+    if (ether.packetLoop (ether.packetReceive())) {
+      memcpy_P (ether.tcpOffset(), page, sizeof page);
+      ether.httpServerReply (sizeof page - 1);
+    }
+  }
+  
+  Network.update ();
+
+  //
+  // Any payloads from sensors available?
+  //BUGBUG don't assume all sensors send TEMP payload!
+  //
+  
+  if (Radio1.available ()) {
+    Radio1.read (&TempPayload, sizeof (SensorPayloadTemperature_t));
+    #if DEBUG
+    sprintf (buff, "Packet %d: %c%c %3d %d", TempPayload.PacketType, (char) (TempPayload.SensorId >> 8), (char) (TempPayload.SensorId & 0xFF), TempPayload.BattLevel, TempPayload.Temperature[0]);
+    Debugln (buff);
+    #endif
+    
+    //
+    // Search through all the known sensors and see if this one has reported already.
+    // If found, copy the new values over the old one.
+    // If not found, add the new entry into the array of known sensors
+    //
+    
+    for (i = 0; i < TempSensorsCount; i++) {
+      if (TempPayload.SensorId == TempSensors[i].SensorId) {
+        break;
+      }
+    }
+    
+    memcpy (&TempSensors[i], &TempPayload, sizeof (TempPayload));
+    if (i == TempSensorsCount) {
+      TempSensorsCount++;
+    }
+  }
+
+  Network.update ();
+  
+  //
+  // Execute the following code every second. Use the recommended subtracting method to handle millis() overflow
+  //
+
+  if ((millis () - LastTime) >= 1000) {
+    LastTime = millis ();
+//    tft.fillScreen (ILI9341_BLACK);
+
+    tft.setCursor (0, 0);
+    tft.setTextColor (ILI9341_WHITE);  
+    tft.setTextSize (2);
+    
+    for (i = 0; i < TempSensorsCount; i++) {
+      sprintf (buff, "%c%c %3d %d", (char) (TempSensors[i].SensorId >> 8), (char) (TempSensors[i].SensorId & 0xFF), TempSensors[i].BattLevel, TempSensors[i].Temperature[1]);
+      tft.println (buff);
     }
   }
 } 
