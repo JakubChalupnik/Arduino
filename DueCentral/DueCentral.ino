@@ -10,6 +10,7 @@
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       18.2.2015 First version, just basic code for HW tests
 //* Kubik       20.2.2015 Added two RF24 modules
+//* Kubik       28.2.2015 Added three LEDs
 //*******************************************************************************
 
 //*******************************************************************************
@@ -34,6 +35,12 @@
 //   pin 48 - SCK
 //   pin 47 - RESET
 //   pin 46 - CS
+//
+//  Indication LEDs
+//   pin 11 - white LED
+//   pin 12 - yellow LED
+//   pin 13 - red LED
+//
 
 //*******************************************************************************
 //*                           Includes and defines                              *
@@ -61,6 +68,10 @@
 #define RF24_1_CE 23
 #define RF24_2_CSN 4
 #define RF24_2_CE 22
+
+#define LED_WHITE 11
+#define LED_YELLOW 12
+#define LED_RED 13
 
 #define STATIC 0  // set to 1 to disable DHCP (adjust myip/gwip values below)
 #define DEBUG 1
@@ -180,6 +191,18 @@ void setup () {
   delay (10);
   
   //
+  // Init pins used for LED, turn all of them but RED off
+  //
+
+  analogWriteResolution (8);
+  pinMode (LED_WHITE, OUTPUT);
+  analogWrite (LED_WHITE, 0);
+  pinMode (LED_YELLOW, OUTPUT);
+  analogWrite (LED_YELLOW, 0);
+  pinMode (LED_RED, OUTPUT);
+  analogWrite (LED_RED, 128);
+  
+  //
   // Initialize serial port and send info
   //
   
@@ -271,7 +294,8 @@ void loop() {
   SensorPayloadTemperature_t TempPayload;
   uint8_t *p = (uint8_t *) &TempPayload;
   int i;
-  static unsigned long LastTime = 0;
+  static unsigned long LastTime = 0, LastTimeMs = 0;
+  static byte LedWhite, LedYellow;
   static char buff[64];
   
   Network.update ();
@@ -292,6 +316,9 @@ void loop() {
   //
   
   if (Radio1.available ()) {
+    LedWhite = 255;
+    analogWrite (LED_WHITE, LedWhite);
+    
     Radio1.read (&TempPayload, sizeof (SensorPayloadTemperature_t));
     #if DEBUG
     sprintf (buff, "Packet %d: %c%c %3d %d", TempPayload.PacketType, (char) (TempPayload.SensorId >> 8), (char) (TempPayload.SensorId & 0xFF), TempPayload.BattLevel, TempPayload.Temperature[0]);
@@ -319,11 +346,30 @@ void loop() {
   Network.update ();
   
   //
+  // Execute the following code every 5ms. Use the recommended subtracting method to handle millis() overflow
+  //
+
+  if ((millis () - LastTimeMs) >= 5) {
+    LastTimeMs = millis ();
+    
+    if (LedWhite > 0) {
+      analogWrite (LED_WHITE, --LedWhite);
+    }
+
+    if (LedYellow > 0) {
+      analogWrite (LED_YELLOW, --LedYellow);
+    }
+  }
+
+  //
   // Execute the following code every second. Use the recommended subtracting method to handle millis() overflow
   //
 
   if ((millis () - LastTime) >= 1000) {
     LastTime = millis ();
+
+    LedYellow = 127;
+    analogWrite (LED_YELLOW, LedYellow);
 
     Text.cursorToXY (0, 70);
     
