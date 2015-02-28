@@ -42,6 +42,7 @@
 #define VERSION 0 
 
 #include <ILI9341_due_gText.h>
+#include "fonts\Arial_bold_14.h"
 #include <ILI9341_due.h>
 #include <EtherCard.h>
 #include <SPI.h>
@@ -95,6 +96,7 @@ RF24Network Network (Radio2);
 //
 
 ILI9341_due tft = ILI9341_due (TFT_CS, TFT_DC);
+ILI9341_due_gText Text (&tft);
 
 //
 // Network related. 
@@ -190,10 +192,14 @@ void setup () {
   //
   
   tft.begin ();
+  tft.setRotation(iliRotation270);
   tft.fillScreen (ILI9341_BLACK);
-  tft.setCursor (0, 0);
-  tft.setTextColor (ILI9341_RED);  
-  tft.setTextSize (1);
+  
+  Text.defineArea (0, 0, 320, 240);
+  Text.selectFont (Arial_bold_14);
+  Text.setFontLetterSpacing (5);
+  Text.setFontMode (gTextFontMode_Solid);
+  Text.setFontColor (ILI9341_WHITE, ILI9341_BLACK);
 
   //
   // Initialise RF24 stuff.
@@ -232,9 +238,9 @@ void setup () {
   //
   
   if (ether.begin (sizeof Ethernet::buffer, mymac, NET_CS) == 0) {
-    tft.println ("Failed to access Ethernet controller");
+    Text.println ("Failed to access Ethernet controller");
   } else {
-    tft.println ("Ethernet controller initialized");
+    Text.println ("Ethernet controller initialized");
     Flags |= F_ETHERNET;
   }
 
@@ -243,17 +249,17 @@ void setup () {
     ether.staticSetup (myip, gwip);
     #else
     if (!ether.dhcpSetup ()) {
-      tft.println ("DHCP failed, using static IP");
+      Text.println ("DHCP failed, using static IP");
       ether.staticSetup (myip, gwip);
     }
     #endif
   
     sprintf (buff, "IP = %d.%d.%d.%d", ether.myip[0], ether.myip[1], ether.myip[2], ether.myip[3]);
-    tft.println (buff);
+    Text.println (buff);
     sprintf (buff, "GW = %d.%d.%d.%d", ether.gwip[0], ether.gwip[1], ether.gwip[2], ether.gwip[3]);
-    tft.println (buff);
+    Text.println (buff);
     sprintf (buff, "DNS = %d.%d.%d.%d", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
-    tft.println (buff);
+    Text.println (buff);
   }
 }
 
@@ -318,15 +324,12 @@ void loop() {
 
   if ((millis () - LastTime) >= 1000) {
     LastTime = millis ();
-//    tft.fillScreen (ILI9341_BLACK);
 
-    tft.setCursor (0, 0);
-    tft.setTextColor (ILI9341_WHITE);  
-    tft.setTextSize (2);
+    Text.cursorToXY (0, 70);
     
     for (i = 0; i < TempSensorsCount; i++) {
-      sprintf (buff, "%c%c %3d %d", (char) (TempSensors[i].SensorId >> 8), (char) (TempSensors[i].SensorId & 0xFF), TempSensors[i].BattLevel, TempSensors[i].Temperature[1]);
-      tft.println (buff);
+      sprintf (buff, "%c%c %4dmV %5.1fC", (char) (TempSensors[i].SensorId >> 8), (char) (TempSensors[i].SensorId & 0xFF), TempSensors[i].BattLevel * 10 + 2000, TempSensors[i].Temperature[0] / 10.0);
+      Text.println (buff);
     }
   }
 } 
