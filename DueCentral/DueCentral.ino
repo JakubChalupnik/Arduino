@@ -11,6 +11,7 @@
 //* Kubik       18.2.2015 First version, just basic code for HW tests
 //* Kubik       20.2.2015 Added two RF24 modules
 //* Kubik       28.2.2015 Added three LEDs
+//* Kubik       1.3.2015  Added time support
 //*******************************************************************************
 
 //*******************************************************************************
@@ -43,6 +44,15 @@
 //
 
 //*******************************************************************************
+//*                        User configurable SW settings                        *
+//******************************************************************************* 
+
+#define DEBUG 1
+#define TIME_UPDATE_PERIOD 3600
+#define STATIC 0  		// set to 1 to disable DHCP (adjust myip/gwip values below)
+#define MAX_TEMP_SENSORS 10
+
+//*******************************************************************************
 //*                           Includes and defines                              *
 //******************************************************************************* 
 
@@ -53,6 +63,8 @@
 #include <ILI9341_due.h>
 #include <EtherCard.h>
 #include <SPI.h>
+#include <Time.h>
+#include <Timezone.h>    // https://github.com/JChristensen/Timezone   
 #include "RF24.h"
 #include "RF24Network.h"
 #include "Rf24PacketDefine.h"
@@ -73,11 +85,6 @@
 #define LED_YELLOW 12
 #define LED_RED 13
 
-#define STATIC 0  // set to 1 to disable DHCP (adjust myip/gwip values below)
-#define DEBUG 1
-
-#define MAX_TEMP_SENSORS 10
-
 typedef struct {
   uint16_t Address;
   uint8_t BattLevel;
@@ -96,7 +103,6 @@ typedef struct {
 // for all standalone nodess that might care.
 // Radio2 is used for RF24Network
 //
-
 
 RF24 Radio1 (RF24_1_CE, RF24_1_CSN);
 RF24 Radio2 (RF24_2_CE, RF24_2_CSN);
@@ -123,25 +129,6 @@ static const byte mymac[] = { 0x74,0x69,0x69,0x33,0x30,0x31 };
 
 byte Ethernet::buffer[500]; 
 
-const char page[] PROGMEM =
-"HTTP/1.0 503 Service Unavailable\r\n"
-"Content-Type: text/html\r\n"
-"Retry-After: 600\r\n"
-"\r\n"
-"<html>"
-  "<head><title>"
-    "Service Temporarily Unavailable"
-  "</title></head>"
-  "<body>"
-    "<h3>This service is currently unavailable</h3>"
-    "<p><em>"
-      "The main server is currently off-line.<br />"
-      "Please try again later."
-    "</em></p>"
-  "</body>"
-"</html>"
-; 
-
 //
 // Arrays of all found sensors and their latest payloads
 //
@@ -155,6 +142,14 @@ int TempSensorsCount = 0;
 
 uint16_t Flags = 0;
 #define F_ETHERNET 0x0001    // Ethernet controller operational
+
+//
+// Time related for Central European Time (Frankfurt, Paris)
+//
+
+TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120};     //Central European Summer Time
+TimeChangeRule CET = {"CET ", Last, Sun, Oct, 3, 60};       //Central European Standard Time
+Timezone CE (CEST, CET);   
 
 //*******************************************************************************
 //*                          Debug support                                      *
@@ -191,7 +186,7 @@ void setup () {
   delay (10);
   
   //
-  // Init pins used for LED, turn all of them but RED off
+  // Init pins used for LED, turn all of them off
   //
 
   analogWriteResolution (8);
@@ -200,7 +195,7 @@ void setup () {
   pinMode (LED_YELLOW, OUTPUT);
   analogWrite (LED_YELLOW, 0);
   pinMode (LED_RED, OUTPUT);
-  analogWrite (LED_RED, 128);
+  analogWrite (LED_RED, 0);
   
   //
   // Initialize serial port and send info
@@ -297,17 +292,9 @@ void loop() {
   static unsigned long LastTime = 0, LastTimeMs = 0;
   static byte LedWhite, LedYellow;
   static char buff[64];
+  time_t t;
   
-  Network.update ();
-
-  if (Flags | F_ETHERNET) {
-    // wait for an incoming TCP packet, but ignore its contents
-    if (ether.packetLoop (ether.packetReceive())) {
-      memcpy_P (ether.tcpOffset(), page, sizeof page);
-      ether.httpServerReply (sizeof page - 1);
-    }
-  }
-  
+  UpdateTimeNtp ();  
   Network.update ();
 
   //
@@ -370,9 +357,14 @@ void loop() {
 
     LedYellow = 127;
     analogWrite (LED_YELLOW, LedYellow);
+  
+    t = now ();
+    sprintf (buff, "%d:%2.2d:%2.2d  ", hour (t), minute (t), second (t));
+    // Text.cursorToXY (0, 70);
+    // Text.println (buff);
+    Text.drawString (buff, 0, 70);
 
-    Text.cursorToXY (0, 70);
-    
+    Text.cursorToXY (0, 85);
     for (i = 0; i < TempSensorsCount; i++) {
       sprintf (buff, "%c%c %4dmV %5.1fC", (char) (TempSensors[i].SensorId >> 8), (char) (TempSensors[i].SensorId & 0xFF), TempSensors[i].BattLevel * 10 + 2000, TempSensors[i].Temperature[0] / 10.0);
       Text.println (buff);
