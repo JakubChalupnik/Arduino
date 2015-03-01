@@ -23,6 +23,7 @@
 //   pin 51 - DC
 //   pin 52 - CS
 //   pin 53 - RESET
+//   pin 3  - backlight PWM
 //
 //  nRF24L01+ radios: HW SPI and
 //   pin 10 - CSN 1
@@ -41,6 +42,12 @@
 //   pin 11 - white LED
 //   pin 12 - yellow LED
 //   pin 13 - red LED
+//
+//  Button(s)
+//   pin 24 - button 1
+//
+//  Others
+//   pin A0 - light sensor (photoresistor)
 //
 
 //*******************************************************************************
@@ -72,6 +79,7 @@
 #define TFT_DC 51
 #define TFT_CS 52
 #define TFT_RESET 53
+#define TFT_PWM 3
 
 #define NET_RST  47
 #define NET_CS   46
@@ -81,9 +89,14 @@
 #define RF24_2_CSN 4
 #define RF24_2_CE 22
 
-#define LED_WHITE 11
-#define LED_YELLOW 12
-#define LED_RED 13
+#define LED_WHITE_PIN 11
+#define LED_YELLOW_PIN 12
+#define LED_RED_PIN 13
+
+#define BUTTON_1_PIN 24      // Pin used by button 1
+#define BUTTON_1 0x01        // Mask corresponding to button 1
+
+#define LIGHT_SENSOR A0
 
 typedef struct {
   uint16_t Address;
@@ -151,6 +164,15 @@ TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120};     //Central European S
 TimeChangeRule CET = {"CET ", Last, Sun, Oct, 3, 60};       //Central European Standard Time
 Timezone CE (CEST, CET);   
 
+//
+// Other variables that have to be global
+//
+
+uint16_t LightIntensity = 0;
+const uint8_t LuminosityTable[] PROGMEM = {
+  0, 1, 2, 3, 4, 5, 7, 9, 12, 15, 18, 22, 27, 32, 37, 44, 50, 58, 66, 75, 85, 96, 107, 120, 133, 147, 163, 179, 196, 215, 234, 255
+};
+
 //*******************************************************************************
 //*                          Debug support                                      *
 //*******************************************************************************
@@ -165,6 +187,117 @@ Timezone CE (CEST, CET);
   #define Dprintf(Format, ...)
 #endif 
 
+//*******************************************************************************
+//*                              LED support                                    *
+//******************************************************************************* 
+
+typedef struct {
+  uint8_t Pin;
+  uint8_t Value;
+  uint8_t Desired;
+} Led_t;
+
+Led_t Leds[] = {
+  {LED_WHITE_PIN, 0, 0},
+  {LED_YELLOW_PIN, 0, 0},
+  {LED_RED_PIN, 0, 0}
+};
+
+#define LED_COUNT (sizeof (Leds) / sizeof (Led_t))
+
+#define LED_WHITE 0
+#define LED_YELLOW 1
+#define LED_RED 2
+
+void InitLeds (void) {
+  uint8_t i;
+  
+  for (i = 0; i < LED_COUNT; i++) {
+    pinMode (Leds[i].Pin, OUTPUT);
+    SetLed (i, 0);
+  }
+}
+
+void SetLed (uint8_t Led, uint8_t Value) {
+  
+  if (Led >= LED_COUNT) {
+    return;
+  }
+  
+  if (Value >= sizeof (LuminosityTable)) {
+    Value = 31;
+  }
+  
+  analogWrite (Leds[Led].Pin, LuminosityTable[Value]);
+  Leds[Led].Desired = Leds[Led].Value = Value;
+}
+
+void ChangeLed (uint8_t Led, uint8_t Value) {
+  
+  if (Led >= LED_COUNT) {
+    return;
+  }
+  
+  if (Value >= sizeof (LuminosityTable)) {
+    Value = 31;
+  }
+  
+  Leds[Led].Desired = Value;
+}
+
+void BlinkLed (uint8_t Led) {
+  
+  if (Led >= LED_COUNT) {
+    return;
+  }
+  
+  analogWrite (Leds[Led].Pin, LuminosityTable[31]);
+  Leds[Led].Value = 31;
+  Leds[Led].Desired = 0;
+}
+
+void UpdateLeds (void) {
+  int i;
+  
+  for (i = 0; i < LED_COUNT; i++) {
+    if (Leds[i].Value == Leds[i].Desired) {
+      continue;
+    } 
+    if (Leds[i].Value > Leds[i].Desired) {
+      Leds[i].Value--;
+    } else {
+      Leds[i].Value++;
+    }
+    analogWrite (Leds[i].Pin, LuminosityTable[Leds[i].Value]);
+  }
+}
+  
+//*******************************************************************************
+//*                            Other small stuff                                *
+//******************************************************************************* 
+
+uint8_t GetButtons (void) {
+  uint8_t Buttons = 0;
+  
+  if (!digitalRead (BUTTON_1_PIN)) {    // 0 means button pressed
+    Buttons |= BUTTON_1;
+  }
+  return Buttons;  
+}
+
+inline uint16_t GetLightIntensity (void) {
+  return 1023 - analogRead (LIGHT_SENSOR);  
+}
+
+void BacklightSet (uint8_t Value) {
+
+  if (Value > sizeof (LuminosityTable)) {
+    Value = 31;
+  }
+  
+  analogWrite (TFT_PWM, LuminosityTable[31 - Value]);
+}
+  
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //******************************************************************************* 
@@ -190,12 +323,13 @@ void setup () {
   //
 
   analogWriteResolution (8);
-  pinMode (LED_WHITE, OUTPUT);
-  analogWrite (LED_WHITE, 0);
-  pinMode (LED_YELLOW, OUTPUT);
-  analogWrite (LED_YELLOW, 0);
-  pinMode (LED_RED, OUTPUT);
-  analogWrite (LED_RED, 0);
+  InitLeds ();
+  
+  //
+  // Other pins
+  //
+  
+  pinMode (BUTTON_1_PIN, INPUT_PULLUP);
   
   //
   // Initialize serial port and send info
@@ -212,6 +346,9 @@ void setup () {
   tft.begin ();
   tft.setRotation(iliRotation270);
   tft.fillScreen (ILI9341_BLACK);
+  
+  pinMode (TFT_PWM, OUTPUT);
+  BacklightSet (31);
   
   Text.defineArea (0, 0, 320, 240);
   Text.selectFont (Arial_bold_14);
@@ -279,6 +416,12 @@ void setup () {
     sprintf (buff, "DNS = %d.%d.%d.%d", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
     Text.println (buff);
   }
+  
+  //
+  // Other init
+  //
+  
+  LightIntensity = GetLightIntensity ();
 }
 
 //*******************************************************************************
@@ -290,7 +433,6 @@ void loop() {
   uint8_t *p = (uint8_t *) &TempPayload;
   int i;
   static unsigned long LastTime = 0, LastTimeMs = 0;
-  static byte LedWhite, LedYellow;
   static char buff[64];
   time_t t;
   
@@ -303,8 +445,7 @@ void loop() {
   //
   
   if (Radio1.available ()) {
-    LedWhite = 255;
-    analogWrite (LED_WHITE, LedWhite);
+    BlinkLed (LED_WHITE);
     
     Radio1.read (&TempPayload, sizeof (SensorPayloadTemperature_t));
     #if DEBUG
@@ -333,19 +474,13 @@ void loop() {
   Network.update ();
   
   //
-  // Execute the following code every 5ms. Use the recommended subtracting method to handle millis() overflow
+  // Execute the following code every 10ms. Use the recommended subtracting method to handle millis() overflow
   //
 
-  if ((millis () - LastTimeMs) >= 5) {
+  if ((millis () - LastTimeMs) >= 10) {
     LastTimeMs = millis ();
-    
-    if (LedWhite > 0) {
-      analogWrite (LED_WHITE, --LedWhite);
-    }
-
-    if (LedYellow > 0) {
-      analogWrite (LED_YELLOW, --LedYellow);
-    }
+    UpdateLeds ();
+    LightIntensity = ((LightIntensity * 63) + GetLightIntensity ()) / 64;
   }
 
   //
@@ -355,13 +490,10 @@ void loop() {
   if ((millis () - LastTime) >= 1000) {
     LastTime = millis ();
 
-    LedYellow = 127;
-    analogWrite (LED_YELLOW, LedYellow);
+    BlinkLed (LED_YELLOW);
   
     t = now ();
-    sprintf (buff, "%d:%2.2d:%2.2d  ", hour (t), minute (t), second (t));
-    // Text.cursorToXY (0, 70);
-    // Text.println (buff);
+    sprintf (buff, "Time: %d:%2.2d:%2.2d  Light: %d    ", hour (t), minute (t), second (t), LightIntensity);
     Text.drawString (buff, 0, 70);
 
     Text.cursorToXY (0, 85);
