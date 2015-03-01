@@ -3,8 +3,7 @@
 //*     (the code is sort of standalone, thus all the globals are in here)      *
 //*******************************************************************************
 
-#define EthernetLedOn() analogWrite (LED_RED, 255)
-#define EthernetLedOff() analogWrite (LED_RED, 0)
+#define EthernetLedBlink() BlinkLed (LED_RED)
 
 //
 // Create an entry for each time server to use
@@ -31,9 +30,8 @@ uint32_t timeLong;
 #define GETTIMEOFDAY_TO_NTP_OFFSET 2208988800UL
 
 void DnsLookup (void) {
-  EthernetLedOn ();
+  EthernetLedBlink ();
   ether.dnsLookup ((char*) pgm_read_word (&(ntpList[currentTimeserver])));
-  EthernetLedOff ();
 } 
 
 void UpdateTimeNtp (void) {
@@ -55,9 +53,9 @@ void UpdateTimeNtp (void) {
   if (plen > 0) {
     timeLong = 0L;
 
-    EthernetLedOn ();
     if (ether.ntpProcessAnswer (&timeLong, clientPort)) {
       if (timeLong) {
+        EthernetLedBlink ();
         timeLong -= GETTIMEOFDAY_TO_NTP_OFFSET;
         setTime (CE.toLocal (timeLong)); 
       }
@@ -72,6 +70,7 @@ void UpdateTimeNtp (void) {
      || (lastUpdate == 0)) {   // time to send request
     lastUpdate = millis();
 
+    EthernetLedBlink ();
     if (ether.dnsLookup ((char*) pgm_read_word (&(ntpList[currentTimeserver])))) {
       ether.ntpRequest (ether.hisip, ++clientPort);
     }
@@ -79,6 +78,5 @@ void UpdateTimeNtp (void) {
       currentTimeserver = 0;
     }
   }
-  EthernetLedOff ();
 }
 
