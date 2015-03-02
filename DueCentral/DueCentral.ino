@@ -56,8 +56,11 @@
 
 #define DEBUG 1
 #define TIME_UPDATE_PERIOD 3600
-#define STATIC 0  		// set to 1 to disable DHCP (adjust myip/gwip values below)
+#define STATIC 0      // set to 1 to disable DHCP (adjust myip/gwip values below)
 #define MAX_TEMP_SENSORS 10
+#define DELAY_DEBOUNCE 10
+#define DELAY_REPEAT_START 40
+#define DELAY_REPEAT 25 
 
 //*******************************************************************************
 //*                           Includes and defines                              *
@@ -67,6 +70,7 @@
 
 #include <ILI9341_due_gText.h>
 #include "fonts\Arial_bold_14.h"
+#include "fonts\fixednums15x31.h"
 #include <ILI9341_due.h>
 #include <EtherCard.h>
 #include <SPI.h>
@@ -105,6 +109,8 @@ typedef struct {
   char Id[NODE_ID_SIZE];
   uint16_t Flags;
 } NetworkNode_t;
+
+typedef enum {S_SENSORS, S_TIME, S_STATUS} Screen_t;
 
 //*******************************************************************************
 //*                               Static variables                              *
@@ -163,6 +169,13 @@ uint16_t Flags = 0;
 TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120};     //Central European Summer Time
 TimeChangeRule CET = {"CET ", Last, Sun, Oct, 3, 60};       //Central European Standard Time
 Timezone CE (CEST, CET);   
+
+//
+// Buttons support. Corresponding bit will be set when the button was pressed recently.
+// To confirm the button was read, clear the corresponding bit
+//
+
+uint8_t Buttons = 0;   
 
 //
 // Other variables that have to be global
@@ -246,13 +259,16 @@ void ChangeLed (uint8_t Led, uint8_t Value) {
 }
 
 void BlinkLed (uint8_t Led) {
+  uint8_t Max;
   
   if (Led >= LED_COUNT) {
     return;
   }
   
-  analogWrite (Leds[Led].Pin, LuminosityTable[31]);
-  Leds[Led].Value = 31;
+  Max = (LightIntensity < 100) ? 3 : 31;
+  
+  analogWrite (Leds[Led].Pin, LuminosityTable[Max]);
+  Leds[Led].Value = Max;
   Leds[Led].Desired = 0;
 }
 
@@ -273,17 +289,54 @@ void UpdateLeds (void) {
 }
   
 //*******************************************************************************
-//*                            Other small stuff                                *
+//*                          Input button(s) support                            *
 //******************************************************************************* 
 
+//
+// Reads all the buttons and sets the corresponding bits of the return value
+//
+
 uint8_t GetButtons (void) {
-  uint8_t Buttons = 0;
-  
-  if (!digitalRead (BUTTON_1_PIN)) {    // 0 means button pressed
-    Buttons |= BUTTON_1;
-  }
-  return Buttons;  
+ uint8_t Buttons = 0;
+ 
+ if (!digitalRead (BUTTON_1_PIN)) {    // 0 means button pressed
+   Buttons |= BUTTON_1;
+ }
+ return Buttons;  
 }
+
+//
+// Updates the buttons status, takes care about autorepeat etc.
+// Must be called periodically at regular intervals, e.g. every 10ms
+//
+
+void UpdateButtons (void) {
+  static byte id = 0x00;
+  static word key_counter = 0;
+  byte c;
+  
+  c = GetButtons ();
+  if (c == 0) {                   // No key pressed
+    id = 0;
+    key_counter = 0;
+  } else if (c != id) {           // New key differs from the previous one
+    id = c;
+    key_counter = 0;
+  } else {                        // New key is the same as previous one
+    key_counter++;
+  }
+  
+  if (key_counter == DELAY_DEBOUNCE) {    // Debouncing complete - set key pressed
+    Buttons = id;
+  } else if (key_counter == DELAY_REPEAT_START) { // Repeated key
+    Buttons = id;
+    key_counter -= DELAY_REPEAT;
+  } 
+}
+
+//*******************************************************************************
+//*                            Other small stuff                                *
+//******************************************************************************* 
 
 inline uint16_t GetLightIntensity (void) {
   return 1023 - analogRead (LIGHT_SENSOR);  
@@ -295,9 +348,9 @@ void BacklightSet (uint8_t Value) {
     Value = 31;
   }
   
-  analogWrite (TFT_PWM, LuminosityTable[31 - Value]);
+  analogWrite (TFT_PWM, 255 - LuminosityTable[Value]);
 }
-  
+
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //******************************************************************************* 
@@ -326,11 +379,11 @@ void setup () {
   InitLeds ();
   
   //
-  // Other pins
+  // Button support
   //
   
   pinMode (BUTTON_1_PIN, INPUT_PULLUP);
-  
+
   //
   // Initialize serial port and send info
   //
@@ -408,13 +461,6 @@ void setup () {
       ether.staticSetup (myip, gwip);
     }
     #endif
-  
-    sprintf (buff, "IP = %d.%d.%d.%d", ether.myip[0], ether.myip[1], ether.myip[2], ether.myip[3]);
-    Text.println (buff);
-    sprintf (buff, "GW = %d.%d.%d.%d", ether.gwip[0], ether.gwip[1], ether.gwip[2], ether.gwip[3]);
-    Text.println (buff);
-    sprintf (buff, "DNS = %d.%d.%d.%d", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
-    Text.println (buff);
   }
   
   //
@@ -435,10 +481,38 @@ void loop() {
   static unsigned long LastTime = 0, LastTimeMs = 0;
   static char buff[64];
   time_t t;
+  static Screen_t Screen = S_SENSORS;
+  bool ScreenNeedsUpdate = false;
+  bool ScreenNeedsClear = false;
   
   UpdateTimeNtp ();  
   Network.update ();
-
+  
+  //
+  // If button is pressed, switch the screen
+  //
+  
+  if (Buttons & BUTTON_1) {
+    Buttons &= ~BUTTON_1;
+    
+    switch (Screen) {
+      case S_SENSORS:
+        Screen = S_TIME;
+        break;
+      case S_TIME:
+        Screen = S_STATUS;
+        break;
+      case S_STATUS:
+        Screen = S_SENSORS;
+        break;
+      default:
+        Screen = S_SENSORS;
+        break;
+    }
+    ScreenNeedsUpdate = true;
+    ScreenNeedsClear = true;
+  }
+        
   //
   // Any payloads from sensors available?
   //BUGBUG don't assume all sensors send TEMP payload!
@@ -446,6 +520,7 @@ void loop() {
   
   if (Radio1.available ()) {
     BlinkLed (LED_WHITE);
+    ScreenNeedsUpdate = true;
     
     Radio1.read (&TempPayload, sizeof (SensorPayloadTemperature_t));
     #if DEBUG
@@ -480,7 +555,13 @@ void loop() {
   if ((millis () - LastTimeMs) >= 10) {
     LastTimeMs = millis ();
     UpdateLeds ();
-    LightIntensity = ((LightIntensity * 63) + GetLightIntensity ()) / 64;
+    UpdateButtons (); 
+    LightIntensity = ((LightIntensity * 7) + GetLightIntensity ()) / 8;
+    if (LightIntensity < 100) {
+      BacklightSet (7);
+    } else {
+      BacklightSet (31);
+    }      
   }
 
   //
@@ -491,15 +572,55 @@ void loop() {
     LastTime = millis ();
 
     BlinkLed (LED_YELLOW);
-  
-    t = now ();
-    sprintf (buff, "Time: %d:%2.2d:%2.2d  Light: %d    ", hour (t), minute (t), second (t), LightIntensity);
-    Text.drawString (buff, 0, 70);
-
-    Text.cursorToXY (0, 85);
-    for (i = 0; i < TempSensorsCount; i++) {
-      sprintf (buff, "%c%c %4dmV %5.1fC", (char) (TempSensors[i].SensorId >> 8), (char) (TempSensors[i].SensorId & 0xFF), TempSensors[i].BattLevel * 10 + 2000, TempSensors[i].Temperature[0] / 10.0);
-      Text.println (buff);
+    if (Screen == S_TIME) {
+      ScreenNeedsUpdate = true;
     }
+  }
+
+  //
+  // Display screen if necessary
+  //
+  
+  if (!ScreenNeedsUpdate) {
+    return;
+  }
+  
+  if (ScreenNeedsClear) {
+    Text.clearArea (ILI9341_BLACK);  
+  }
+
+  switch (Screen) {
+    case S_SENSORS:
+      Text.setFontColor (ILI9341_WHITE, ILI9341_BLACK);
+      Text.selectFont (Arial_bold_14);
+      Text.cursorToXY (0, 0);
+      for (i = 0; i < TempSensorsCount; i++) {
+        sprintf (buff, "%c%c %4dmV %5.1fC", (char) (TempSensors[i].SensorId >> 8), (char) (TempSensors[i].SensorId & 0xFF), TempSensors[i].BattLevel * 10 + 2000, TempSensors[i].Temperature[0] / 10.0);
+        Text.println (buff);
+      }
+      break;
+
+    case S_TIME:
+      Text.setFontColor (ILI9341_WHITE, ILI9341_BLACK);
+      Text.selectFont (fixednums15x31);
+      t = now ();
+      sprintf (buff, "%d:%2.2d:%2.2d", hour (t), minute (t), second (t));
+      Text.drawString (buff, 0, 0);
+      break;
+      
+    case S_STATUS:
+      Text.setFontColor (ILI9341_RED, ILI9341_BLACK);
+      Text.selectFont (Arial_bold_14);
+      Text.cursorToXY (0, 0);
+      sprintf (buff, "IP = %d.%d.%d.%d", ether.myip[0], ether.myip[1], ether.myip[2], ether.myip[3]);
+      Text.println (buff);
+      sprintf (buff, "GW = %d.%d.%d.%d", ether.gwip[0], ether.gwip[1], ether.gwip[2], ether.gwip[3]);
+      Text.println (buff);
+      sprintf (buff, "DNS = %d.%d.%d.%d", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
+      Text.println (buff);
+      break;
+
+    default:
+      break;
   }
 } 
