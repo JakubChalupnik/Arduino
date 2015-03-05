@@ -1,48 +1,56 @@
 //*******************************************************************************
 //*
-//* Arduino based low power sensor unit using nRF24L01+ module
+//* Arduino based low power meteo unit using nRF24L01+, DHT22 and BMP180
+//* Using Adafruit libraries for sensors, based on Adafruit sample code
+//* RF24Radio library by TMRh20: http://tmrh20.github.io/RF24/
 //*
 //*******************************************************************************
 //* Processor:  Arduino Pro Mini 3.3V/8MHz
 //* Author      Date       Comment
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-//* Kubik       11.1.2015 First version, just basic code for HW tests
-//* Kubik       21.2.2015 Updated code according to RF24Node
+//* Kubik       5.3.2015 First version, just basic code for HW tests
 //*******************************************************************************
 
 //*******************************************************************************
 //*                            HW details                                       *
 //*******************************************************************************
 // Standard NRF24L01+ module (eBay)
-// One DS1820 style sensor
+// One BMP180 barometric pressure sensor
+// One DHT22 humidity / temperature sensor
 //
 // Used pins:
 //  NRF24L01+       SPI + 9, 10
-//  DS1820  8
+//  BMP180  - I2C
+//  DHT22   - pin 3 
 
 //*******************************************************************************
 //*                           Includes and defines                              *
 //******************************************************************************* 
 
 #define VERSION 0
-#define DEBUG_OW_TEMP 0
-#define DEBUG_RF24 0
-#define DEBUG 0
+#define DEBUG_RF24 1
+#define DEBUG 1
 
 #include <RF24.h>
 #include <SPI.h>
-#include <OneWire.h>
 #include <LowPower.h>
 #include <Rf24PacketDefine.h>
 #include <EEPROM.h>
+#include "DHT.h"
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP085_U.h>
+
+#define PIN_DHT 3                                 // Pin used to communicate with DTHxx
+#define DHTTYPE DHT22                             // DHT 22  (AM2302)
 
 #define PIN_BATTERY_ANALOG A0                     // Analog pin used to measure the battery voltage 
 #define PIN_BATTERY_MEASURE 15                    // Pull this pin low to measure the bat. voltage (ground of the resistor divider)
 #define DEFAULT_BATTERY_K 480L                    // Default battery conversion constant (adjust according to divider used)
 #define DEFAULT_BATTERY_TYPE F_BATTERY_NONE       // Type of the battery this node uses - NONE means net powered 
-#define DEFAULT_TIME_COUNTER_TEMP 8
+#define DEFAULT_TIME_COUNTER_MEASURE 8
 #define F_DEFAULTS DEFAULT_BATTERY_TYPE
-#define DEFAULT_SENSOR_ID 'Tx'                    // Default sensor type is Temperature X (to remind me it needs setting up)
+#define DEFAULT_SENSOR_ID 'Mx'                    // Default sensor type is Meteo X (to remind me it needs setting up)
 
 //*******************************************************************************
 //*                           Data types                                        *
@@ -53,8 +61,8 @@ typedef struct {
   uint16_t Header;
   uint16_t SensorId;
   uint16_t BatteryCoefficient;
-  uint8_t TemperaturePeriod;
-  uint16_t Flags;
+  uint8_t MeasurementPeriod;
+  uint8_t Flags;
 } Eeprom_t;
 
 //*******************************************************************************
@@ -66,20 +74,15 @@ typedef struct {
 //
 
 RF24 Rf24Radio (9, 10);
-SensorPayloadTemperature_t PayloadTemperature;
+SensorPayloadMeteo_t Payload;
 
 //
-// OneWire variables
+// Sensor variables
+// DHT uses third parameter. This needs to be set to 3 for 8MHz processor
 //
 
-OneWire Sensor (8);            // on pin 8 (a 4.7K resistor is necessary)
-byte SensorAddress1[8];
-byte SensorAddress2[8];
-byte SensorType1; 
-byte SensorType2 = 0xFF;       // No second sensor by default
-
-uint16_t Temperature1; 
-uint16_t Temperature2 = 0xFFFF; 
+DHT Dht (PIN_DHT, DHTTYPE, 3);
+Adafruit_BMP085_Unified Bmp = Adafruit_BMP085_Unified (10085);
 
 //
 // EEPROM variables
@@ -175,7 +178,7 @@ bool EepromRead (void) {
     Eeprom.Header = 'ID';
     Eeprom.SensorId = DEFAULT_SENSOR_ID;
     Eeprom.BatteryCoefficient = DEFAULT_BATTERY_K;
-    Eeprom.TemperaturePeriod = DEFAULT_TIME_COUNTER_TEMP;
+    Eeprom.MeasurementPeriod = DEFAULT_TIME_COUNTER_MEASURE;
     return false;
   }
   return true;
@@ -202,199 +205,6 @@ void EepromWrite (void) {
 }
 
 //*******************************************************************************
-//*                               DS1820 support                                *
-//*******************************************************************************
-
-#if DEBUG_OW_TEMP
-  #define DebugOwTemp(...) {Serial.print(__VA_ARGS__); delay (50);}
-  #define DebugOwTempln(...) {Serial.println(__VA_ARGS__); delay (50);}
-#else
-  #define DebugOwTemp(...)
-  #define DebugOwTempln(...)
-#endif 
-
-void SensorRead (void) {
-  byte SensorData[12];
-  byte i;
-  int16_t Raw;
-  byte Cfg;
-  
-  Sensor.reset ();
-  Sensor.select (SensorAddress1);
-  Sensor.write (0x44, 1);                          // start conversion, with parasite power on at the end
-
-  LowPower.powerDown (SLEEP_1S, ADC_OFF, BOD_OFF);     
-  
-  Sensor.reset ();
-  Sensor.select (SensorAddress1);    
-  Sensor.write (0xBE);                             // Read Scratchpad
-
-  for ( i = 0; i < 9; i++) {                       // we need 9 bytes
-    SensorData[i] = Sensor.read();
-  }
-
-  Raw = (SensorData[1] << 8) | SensorData[0];
-  if (SensorType1) {
-    Raw <<= 3;                                     // 9 bit resolution default
-    if (SensorData [7] == 0x10) {
-      Raw = (Raw & 0xFFF0) + 12 - SensorData [6];  // count remain gives full 12 bit resolution
-    }
-  } else {
-    Cfg = (SensorData [4] & 0x60);
-    if (Cfg == 0x00) {
-      Raw <<= 3;                                  // 9 bit resolution, 93.75 ms
-    } else if (Cfg == 0x20) {
-      Raw <<= 2;                                 // 10 bit res, 187.5 ms
-    } else if (Cfg == 0x40) {
-      Raw <<= 1;                                 // 11 bit res, 375 ms
-    }
-    
-    //
-    // default is 12 bit resolution, 750 ms conversion time
-    //
-  }
-
-  DebugOwTemp (F("Raw = "));
-  DebugOwTempln (Raw);
-  Temperature1 = (Raw * 5 + 4) / 8; 
-  
-  if (SensorType2 == 0xFF) {
-    DebugOwTempln (F("No Sensor2"));
-    return;
-  }
-
-  //
-  // Second sensor (if any)
-  //
-
-  Sensor.reset ();
-  Sensor.select (SensorAddress2);
-  Sensor.write (0x44, 1);                          // start conversion, with parasite power on at the end
-  
-  LowPower.powerDown (SLEEP_1S, ADC_OFF, BOD_OFF);     
-  
-  Sensor.reset ();
-  Sensor.select (SensorAddress2);    
-  Sensor.write (0xBE);                             // Read Scratchpad
-
-  for ( i = 0; i < 9; i++) {                       // we need 9 bytes
-    SensorData[i] = Sensor.read();
-  }
-
-  Raw = (SensorData[1] << 8) | SensorData[0];
-  if (SensorType2) {
-    Raw <<= 3;                                     // 9 bit resolution default
-    if (SensorData [7] == 0x10) {
-      Raw = (Raw & 0xFFF0) + 12 - SensorData [6];  // count remain gives full 12 bit resolution
-    }
-  } else {
-    Cfg = (SensorData [4] & 0x60);
-    if (Cfg == 0x00) {
-      Raw <<= 3;                                  // 9 bit resolution, 93.75 ms
-    } else if (Cfg == 0x20) {
-      Raw <<= 2;                                 // 10 bit res, 187.5 ms
-    } else if (Cfg == 0x40) {
-      Raw <<= 1;                                 // 11 bit res, 375 ms
-    }
-    
-    //
-    // default is 12 bit resolution, 750 ms conversion time
-    //
-  }
-
-  DebugOwTemp (F("Raw2 = "));
-  DebugOwTempln (Raw);
-  Temperature2 = (Raw * 5 + 4) / 8; 
-}
-
-//
-// Initialize the DS18xxx sensors, look for two of them 
-// and store their addresses as SensorAddress1 and SensorAddress2
-//
-
-void DS1820Init (void) {
-  byte i;
-  
-  if (!Sensor.search (SensorAddress1)) {
-    DebugOwTempln (F("No sensor found, gone sleeping"));
-    Assert ();
-  } 
-  
-  DebugOwTemp ("ROM =");
-  for (i = 0; i < 8; i++) {
-    DebugOwTemp (" ");
-    DebugOwTemp (SensorAddress1 [i], HEX);
-  }
-  
-  DebugOwTempln ();
-  if (OneWire::crc8 (SensorAddress1, 7) != SensorAddress1 [7]) {
-    DebugOwTempln(F("CRC is not valid!"));
-    Assert ();
-  }
-  
-  // the first ROM byte indicates which chip
-  switch (SensorAddress1 [0]) {
-    case 0x10:
-      DebugOwTempln (F("  Chip = DS18S20"));
-      SensorType1 = 1;
-      Flags = (Flags & ~F_SENSOR_MASK) | F_SENSOR_DS1820;
-      break;
-    case 0x28:
-      DebugOwTempln (F("  Chip = DS18B20"));
-      SensorType1 = 0;
-      Flags = (Flags & ~F_SENSOR_MASK) | F_SENSOR_DS1820;
-      break;
-    case 0x22:
-      DebugOwTempln (F("  Chip = DS1822"));
-      SensorType1 = 0;
-      Flags = (Flags & ~F_SENSOR_MASK) | F_SENSOR_DS1822;
-      break;
-    default:
-      DebugOwTempln (F("Device is not a DS18x20 family device."));
-      Assert ();
-  } 
-
-  //
-  // Search for second sensor
-  //
-  
-  if (!Sensor.search (SensorAddress2)) {
-    return;
-  } 
-  
-  DebugOwTemp ("ROM =");
-  for (i = 0; i < 8; i++) {
-    DebugOwTemp (" ");
-    DebugOwTemp (SensorAddress2 [i], HEX);
-  }
-  
-  DebugOwTempln ();
-  if (OneWire::crc8 (SensorAddress2, 7) != SensorAddress2 [7]) {
-    DebugOwTempln(F("CRC is not valid!"));
-    Assert ();
-  }
-  
-  // the first ROM byte indicates which chip
-  switch (SensorAddress2 [0]) {
-    case 0x10:
-      DebugOwTempln (F("  Chip2 = DS18S20"));
-      SensorType2 = 1;
-      break;
-    case 0x28:
-      DebugOwTempln (F("  Chip2 = DS18B20"));
-      SensorType2 = 0;
-      break;
-    case 0x22:
-      DebugOwTempln (F("  Chip2 = DS1822"));
-      SensorType2 = 0;
-      break;
-    default:
-      DebugOwTempln (F("Device2 is not a DS18x20 family device."));
-      Assert ();
-  } 
-}
-
-//*******************************************************************************
 //*                                 RF24 support                                *
 //*******************************************************************************
 
@@ -407,7 +217,34 @@ void DS1820Init (void) {
 #endif 
 
 #include "EepromEditor.h"  
-  
+
+//*******************************************************************************
+//*                          BMP085 / BMP180 support                            *
+//******************************************************************************* 
+uint16_t GetBarometricPressure (void) {
+  sensors_event_t event;
+
+  Bmp.getEvent (&event);
+  return event.pressure; 
+}
+
+#if DEBUG
+void displaySensorDetails(void) {
+  sensor_t sensor;
+  Bmp.getSensor (&sensor);
+  Serial.println ("------------------------------------");
+  Serial.print   ("Sensor:       "); Serial.println (sensor.name);
+  Serial.print   ("Driver Ver:   "); Serial.println (sensor.version);
+  Serial.print   ("Unique ID:    "); Serial.println (sensor.sensor_id);
+  Serial.print   ("Max Value:    "); Serial.print (sensor.max_value); Serial.println (" hPa");
+  Serial.print   ("Min Value:    "); Serial.print (sensor.min_value); Serial.println (" hPa");
+  Serial.print   ("Resolution:   "); Serial.print (sensor.resolution); Serial.println (" hPa");  
+  Serial.println ("------------------------------------");
+  Serial.println ("");
+  delay(500);
+}
+#endif // DEBUG
+
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //******************************************************************************* 
@@ -415,7 +252,7 @@ void DS1820Init (void) {
 void setup(void) {
 
   Serial.begin (57600);
-  Serial.println ("[RF24Sensor]");
+  Serial.println (F("[RF24Meteo]"));
 
   //
   // Read EEPROM to get the node address, ID and other stuff
@@ -426,16 +263,24 @@ void setup(void) {
     Debug ((char) (Eeprom.SensorId >> 8));
     Debugln ((char) (Eeprom.SensorId & 0xFF));
   } else {
-    Debugln (F("EEPROM read failed, default address 05 assigned"));
+    Debugln (F("EEPROM read failed, default address Mx assigned"));
   }    
 
   //
   // Sensor init, printf and VT100 init
   //
-  
-  DS1820Init ();
+
   PrintfInit ();
   Vt100Init (); 
+  Dht.begin ();
+  if (!Bmp.begin()) {
+    Serial.println ("Ooops, no BMP085 detected ... Check your wiring or I2C ADDR!");
+    while (1);
+  }
+
+#if DEBUG
+  displaySensorDetails();
+#endif // DEBUG
 
   //
   // Setup and configure rf radio
@@ -443,7 +288,7 @@ void setup(void) {
   //
 
   Rf24Radio.begin();
-  Rf24Radio.setPayloadSize (sizeof (SensorPayloadTemperature_t));
+  Rf24Radio.setPayloadSize (sizeof (SensorPayloadMeteo_t));
   Rf24Radio.setAutoAck (false);
   Rf24Radio.setPALevel (RF24_PA_HIGH);
   Rf24Radio.setDataRate (RF24_250KBPS);
@@ -485,7 +330,10 @@ void loop (void) {
   bool Ok;
   uint32_t tmp;
   uint16_t BattLevel;
-  uint8_t TempCounter;
+  uint8_t MeasureCounter;
+  float Humidity;
+  float Temperature;
+  uint16_t Pressure;
   
   //
   // If measuring the battery voltage is supported (coef > 0), do the following:
@@ -534,33 +382,42 @@ void loop (void) {
   // Now measure the temperature
   //
 
-  SensorRead ();
-  Debug ("Temperatures ");
-  Debug (Temperature1);
-  Debug (", ");
-  Debugln (Temperature2);
-    
-  PayloadTemperature.PacketType = RF24_SENSOR_TYPE_TEMP;
-  PayloadTemperature.Flags = Flags;
-  PayloadTemperature.SensorId = Eeprom.SensorId;
-  PayloadTemperature.BattLevel = BattLevel;
-  PayloadTemperature.Temperature[0] = Temperature1;
-  PayloadTemperature.Temperature[1] = Temperature2;
+  Humidity = Dht.readHumidity ();
+  Temperature = Dht.readTemperature ();
+
+  Debug ("DHT22 temperature ");
+  Debug (Temperature);
+  Debug (" Humidity ");
+  Debug (Humidity);
+  Debugln ("%");
+  
+  Pressure = GetBarometricPressure ();
+  Debug ("Pressure ");
+  Debug (Pressure);
+  Debugln ("hPA");
+   
+  Payload.PacketType = RF24_SENSOR_TYPE_METEO;
+  Payload.Flags = Flags;
+  Payload.SensorId = Eeprom.SensorId;
+  Payload.BattLevel = BattLevel;
+  Payload.Temperature = ((int) (Temperature + 0.5)) * 10;
+  Payload.Humidity = (uint8_t) (Humidity + 0.5);
+  Payload.Pressure = Pressure;
   
   Rf24Radio.powerUp ();
-  Ok = Rf24Radio.write ((uint8_t *) &PayloadTemperature, sizeof (PayloadTemperature));
+  Ok = Rf24Radio.write ((uint8_t *) &Payload, sizeof (Payload));
   Rf24Radio.powerDown ();
   if (Ok) {
-    DebugRf24ln (F("Temperature sending ok."));
+    DebugRf24ln (F("Payload sent."));
   } else {
-    DebugRf24ln (F("Temperature sending failed."));
+    DebugRf24ln (F("Payload sending failed."));
   }
 
   //
   // Put the node to sleep for TemperaturePeriod * 8 seconds
   //
   
-  for (TempCounter = 0; TempCounter < Eeprom.TemperaturePeriod; TempCounter++) {
+  for (MeasureCounter = 0; MeasureCounter < Eeprom.MeasurementPeriod; MeasureCounter++) {
     LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);
   }
 }
