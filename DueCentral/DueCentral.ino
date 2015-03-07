@@ -57,7 +57,7 @@
 #define DEBUG 1
 #define TIME_UPDATE_PERIOD 3600
 #define STATIC 0      // set to 1 to disable DHCP (adjust myip/gwip values below)
-#define MAX_TEMP_SENSORS 10
+#define MAX_SENSORS 16
 #define DELAY_DEBOUNCE 10
 #define DELAY_REPEAT_START 40
 #define DELAY_REPEAT 25 
@@ -102,6 +102,11 @@
 
 #define LIGHT_SENSOR A0
 
+typedef struct {
+  SensorPayload_t Payload;
+  time_t LastReport;
+} SensorNode_t;
+  
 typedef struct {
   uint16_t Address;
   uint8_t BattLevel;
@@ -152,8 +157,8 @@ byte Ethernet::buffer[500];
 // Arrays of all found sensors and their latest payloads
 //
 
-SensorPayloadTemperature_t TempSensors [MAX_TEMP_SENSORS];
-int TempSensorsCount = 0;
+SensorNode_t Sensors [MAX_SENSORS];
+int SensorsCount = 0;
 
 //
 // Globally available and used flags
@@ -335,6 +340,46 @@ void UpdateButtons (void) {
 }
 
 //*******************************************************************************
+//*                            Screen output helpers                            *
+//******************************************************************************* 
+
+char *PayloadToString (int Index) {
+  static char Buffer[64];
+  char *b;
+  SensorPayload_t *p = &Sensors[Index].Payload;
+
+  Text.setFontColor ((now () - Sensors[Index].LastReport) > 300 ? ILI9341_RED : ILI9341_WHITE, ILI9341_BLACK);
+  
+  b = Buffer + sprintf (Buffer, "%c%c ", (char) (p->SensorId >> 8), (char) (p->SensorId & 0xFF));
+  
+  if (p->BattLevel == 255) {
+    b += sprintf (b, "NoBat  ");
+  } else if (p->BattLevel == 0) {
+    b += sprintf (b, "BatLow ");
+  } else {
+    b += sprintf (b, "%4.2fV  ", p->BattLevel * 10 + 2000);
+  }
+  
+  switch (p->PacketType) {
+    case RF24_SENSOR_TYPE_TEMP:
+      b += sprintf (b, "%5.1fC ", (p->TemperatureInt + 0.05) / 10.0); 
+      if (p->TemperatureExt < 65535) {
+        b += sprintf (b, "%5.1fC ", (p->TemperatureExt + 0.05) / 10.0); 
+      }
+      break;
+      
+    case RF24_SENSOR_TYPE_METEO:
+      b += sprintf (b, "%5.1fC %4dhPa ", (p->Temperature + 0.05) / 10.0, p->Pressure); 
+      break;
+      
+    default:
+      break;
+  }
+  
+  return Buffer;
+}
+
+//*******************************************************************************
 //*                            Other small stuff                                *
 //******************************************************************************* 
 
@@ -475,8 +520,7 @@ void setup () {
 //******************************************************************************* 
 
 void loop() {
-  SensorPayloadTemperature_t TempPayload;
-  uint8_t *p = (uint8_t *) &TempPayload;
+  SensorPayload_t Payload;
   int i;
   static unsigned long LastTime = 0, LastTimeMs = 0;
   static char buff[64];
@@ -515,18 +559,13 @@ void loop() {
         
   //
   // Any payloads from sensors available?
-  //BUGBUG don't assume all sensors send TEMP payload!
   //
   
   if (Radio1.available ()) {
     BlinkLed (LED_WHITE);
     ScreenNeedsUpdate = true;
     
-    Radio1.read (&TempPayload, sizeof (SensorPayloadTemperature_t));
-    #if DEBUG
-    sprintf (buff, "Packet %d: %c%c %3d %d", TempPayload.PacketType, (char) (TempPayload.SensorId >> 8), (char) (TempPayload.SensorId & 0xFF), TempPayload.BattLevel, TempPayload.Temperature[0]);
-    Debugln (buff);
-    #endif
+    Radio1.read (&Payload, sizeof (SensorPayload_t));
     
     //
     // Search through all the known sensors and see if this one has reported already.
@@ -534,15 +573,16 @@ void loop() {
     // If not found, add the new entry into the array of known sensors
     //
     
-    for (i = 0; i < TempSensorsCount; i++) {
-      if (TempPayload.SensorId == TempSensors[i].SensorId) {
+    for (i = 0; i < SensorsCount; i++) {
+      if (Payload.SensorId == Sensors[i].Payload.SensorId) {
         break;
       }
     }
     
-    memcpy (&TempSensors[i], &TempPayload, sizeof (TempPayload));
-    if (i == TempSensorsCount) {
-      TempSensorsCount++;
+    memcpy (&Sensors[i].Payload, &Payload, sizeof (Payload));
+    Sensors[i].LastReport = now ();
+    if (i == SensorsCount) {
+      SensorsCount++;
     }
   }
 
@@ -591,20 +631,17 @@ void loop() {
 
   switch (Screen) {
     case S_SENSORS:
-      Text.setFontColor (ILI9341_WHITE, ILI9341_BLACK);
       Text.selectFont (Arial_bold_14);
-      Text.cursorToXY (0, 0);
-      for (i = 0; i < TempSensorsCount; i++) {
-        sprintf (buff, "%c%c %4dmV %5.1fC", (char) (TempSensors[i].SensorId >> 8), (char) (TempSensors[i].SensorId & 0xFF), TempSensors[i].BattLevel * 10 + 2000, TempSensors[i].Temperature[0] / 10.0);
-        Text.println (buff);
+      for (i = 0; i < SensorsCount; i++) {
+        Text.drawString (PayloadToString (i), 0, i * 15);
       }
       break;
 
     case S_TIME:
+      t = now ();
       Text.setFontColor (ILI9341_WHITE, ILI9341_BLACK);
       Text.selectFont (fixednums15x31);
-      t = now ();
-      sprintf (buff, "%d:%2.2d:%2.2d", hour (t), minute (t), second (t));
+      sprintf (buff, "%d:%2.2d:%2.2d ", hour (t), minute (t), second (t));
       Text.drawString (buff, 0, 0);
       break;
       
@@ -612,11 +649,11 @@ void loop() {
       Text.setFontColor (ILI9341_RED, ILI9341_BLACK);
       Text.selectFont (Arial_bold_14);
       Text.cursorToXY (0, 0);
-      sprintf (buff, "IP = %d.%d.%d.%d", ether.myip[0], ether.myip[1], ether.myip[2], ether.myip[3]);
+      sprintf (buff, "IP = %d.%d.%d.%d ", ether.myip[0], ether.myip[1], ether.myip[2], ether.myip[3]);
       Text.println (buff);
-      sprintf (buff, "GW = %d.%d.%d.%d", ether.gwip[0], ether.gwip[1], ether.gwip[2], ether.gwip[3]);
+      sprintf (buff, "GW = %d.%d.%d.%d ", ether.gwip[0], ether.gwip[1], ether.gwip[2], ether.gwip[3]);
       Text.println (buff);
-      sprintf (buff, "DNS = %d.%d.%d.%d", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
+      sprintf (buff, "DNS = %d.%d.%d.%d ", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
       Text.println (buff);
       break;
 
