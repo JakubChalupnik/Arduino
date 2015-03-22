@@ -22,14 +22,16 @@
 //  NRF24L01+       SPI + 9, 10
 //  BMP180  - I2C
 //  DHT22   - pin 3 
+//  Input voltage - A0
+//  Ground of the voltage divider - pin 15
 
 //*******************************************************************************
 //*                           Includes and defines                              *
 //******************************************************************************* 
 
 #define VERSION 0
-#define DEBUG_RF24 1
-#define DEBUG 1
+#define DEBUG_RF24 0
+#define DEBUG 0
 
 #include <RF24.h>
 #include <SPI.h>
@@ -74,7 +76,7 @@ typedef struct {
 //
 
 RF24 Rf24Radio (9, 10);
-SensorPayloadMeteo_t Payload;
+SensorPayload_t Payload;
 
 //
 // Sensor variables
@@ -320,6 +322,9 @@ void setup(void) {
   if (IsChar ()) {
     EepromEditor ();
   }
+
+  Payload.PacketType = RF24_SENSOR_TYPE_METEO;
+  Payload.SensorId = Eeprom.SensorId;
 }
 
 //*******************************************************************************
@@ -344,10 +349,17 @@ void loop (void) {
 
   if (Eeprom.BatteryCoefficient > 0) {
     pinMode (PIN_BATTERY_MEASURE, OUTPUT);
-    BattLevelAverage = ((BattLevelAverage * 15) + analogRead (PIN_BATTERY_ANALOG)) >> 4;
-    pinMode (PIN_BATTERY_MEASURE, INPUT);
-    Debug ("Battery level average ");
+    BattLevel = analogRead (PIN_BATTERY_ANALOG);
+    BattLevelAverage = ((BattLevelAverage * 15) + BattLevel) >> 4;
+//BUGBUG    pinMode (PIN_BATTERY_MEASURE, INPUT);
+    Debug ("Battery level ");
+    Debug (BattLevel);
+    Debug (", average ");
     Debugln (BattLevelAverage);
+
+    tmp = ((uint32_t) BattLevel * Eeprom.BatteryCoefficient + 512) >> 10;
+    Debug ("Voltage ");
+    Debugln (tmp);
   
     //
     // We'll be sending the battery voltage in tens of mV. 
@@ -372,7 +384,7 @@ void loop (void) {
     } else {
       BattLevel = (uint8_t) (tmp - 200);
     }
-    
+
   } else {      // Voltage measurement not available
     BattLevel = 0;
     Eeprom.Flags |= F_NO_VOLTAGE;
@@ -396,11 +408,9 @@ void loop (void) {
   Debug (Pressure);
   Debugln ("hPA");
    
-  Payload.PacketType = RF24_SENSOR_TYPE_METEO;
-  Payload.Flags = Flags;
-  Payload.SensorId = Eeprom.SensorId;
+  Payload.FlagsS = 0;  // BUGBUG
   Payload.BattLevel = BattLevel;
-  Payload.Temperature = ((int) (Temperature + 0.5)) * 10;
+  Payload.Temperature = ((int) (Temperature + 0.05)) * 10;
   Payload.Humidity = (uint8_t) (Humidity + 0.5);
   Payload.Pressure = Pressure;
   
