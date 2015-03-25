@@ -9,6 +9,7 @@
  * Author   Date       Comment
  *~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  * Kubik    2.6.2013   Added file headers and basic T6963 support
+ * Kubik    4.6.2013   LCD replaced to regular 2x40
  ********************************************************************/
  
 //
@@ -65,58 +66,63 @@ IrEvent_t IrEvents[] = {
 unsigned int Flags = 0;
 #define F_PLAYING 0x01
 #define F_MILLIS 0x02
+#define F_BUFFER_READY 0x04
 
 #define FlagSet(F) {Flags |= F;}
 #define FlagClear(F) {Flags &= ~F;}
 #define FlagIsSet(F) (Flags & F)
 
-//---------------------------------------------------------------------------
-// Circular buffer support - used to detect the command line prompt
-//
-
 #define BUFFER_SIZE 64
-#define R_COMMAND_PROMPT ":/# "
 
-int BufferStart = 0;
-int BufferEnd = 0;
-int BufferActive = 0;
 
-byte CircularBuffer [BUFFER_SIZE];
-
-void PushToQueue(byte p)
-{
-    CircularBuffer[BufferEnd] = p;
-    BufferEnd = (BufferEnd + 1) % BUFFER_SIZE;
-
-    if (BufferActive < BUFFER_SIZE)
-    {
-        BufferActive++;
-    } else {
-        /* Overwriting the oldest. Move start to next-oldest */
-        BufferStart = (BufferStart + 1) % BUFFER_SIZE;
-    }
-}
-
-int SearchString (char *s) {
-    char *p;
-    int i = (BufferEnd + BUFFER_SIZE - 1) % BUFFER_SIZE;
-    int len = strlen(s);
-
-    if (BufferActive < len) {
-        return 0;
-    }
-    p = s + len - 1;
-
-    while (p != s) {
-        if (*p != CircularBuffer[i]) {
-            break;
-        }
-        p--;
-        i = (i + BUFFER_SIZE - 1) % BUFFER_SIZE;
-    }
-
-    return *p == CircularBuffer[i];
-}
+//
+////---------------------------------------------------------------------------
+//// Circular buffer support - used to detect the command line prompt
+////
+//
+//#define BUFFER_SIZE 64
+//#define R_COMMAND_PROMPT ":/# "
+//
+//int BufferStart = 0;
+//int BufferEnd = 0;
+//int BufferActive = 0;
+//
+//byte CircularBuffer [BUFFER_SIZE];
+//
+//void PushToQueue(byte p)
+//{
+//    CircularBuffer[BufferEnd] = p;
+//    BufferEnd = (BufferEnd + 1) % BUFFER_SIZE;
+//
+//    if (BufferActive < BUFFER_SIZE)
+//    {
+//        BufferActive++;
+//    } else {
+//        /* Overwriting the oldest. Move start to next-oldest */
+//        BufferStart = (BufferStart + 1) % BUFFER_SIZE;
+//    }
+//}
+//
+//int SearchString (char *s) {
+//    char *p;
+//    int i = (BufferEnd + BUFFER_SIZE - 1) % BUFFER_SIZE;
+//    int len = strlen(s);
+//
+//    if (BufferActive < len) {
+//        return 0;
+//    }
+//    p = s + len - 1;
+//
+//    while (p != s) {
+//        if (*p != CircularBuffer[i]) {
+//            break;
+//        }
+//        p--;
+//        i = (i + BUFFER_SIZE - 1) % BUFFER_SIZE;
+//    }
+//
+//    return *p == CircularBuffer[i];
+//}
 
 //---------------------------------------------------------------------------
 // Line read support
@@ -186,12 +192,10 @@ void setup() {
   irrecv.enableIRIn(); 
   
   //
-  // Set the data rate for the SoftwareSerial port
-  // Emit enter, to make sure we'll bring command prompt up
+  // Set the data rate for the Serial1 port
   //
   
   Serial1.begin(115200);
-  Serial1.write(0x0A);    
 
   //
   // Enable LCD, set contrast etc. and initialize the display
@@ -208,7 +212,6 @@ void setup() {
   lcd.print("MPC client");  
   lcd.setCursor ( 0, 1 );        // go to the next line
   lcd.print ("(c) 2013 Kubik");      
-
 }
 
 //
@@ -232,6 +235,7 @@ void loop() {
   static unsigned long int LastMillis = 0;
   unsigned long int Millis = millis ();
   static unsigned int Timeout = 0;
+  static byte BufIndex = 0;
 
   //
   // Detect if millis changed - if yes, set flag for this loop iteration
@@ -261,33 +265,57 @@ void loop() {
       }
     } 
   }
-  
-  //
-  // If any serial byte is available, push it into the input queue
-  //
 
-  if (Serial1.available ()) {
-    c = Serial1.read ();
-    PushToQueue (c);
-    Serial.write(c);
+
+
+
+  if (Serial1.available()) {
+    c = Serial1.read();
+    if (c == 0x0A) {
+      SerialBuffer [BufIndex] = '\0';
+      FlagSet (F_BUFFER_READY);
+      BufIndex = 0;
+    } else if (BufIndex < (sizeof (SerialBuffer) - 1)) {
+      SerialBuffer [BufIndex] = c;
+      BufIndex++;
+      FlagClear (F_BUFFER_READY);
+    }
   }
+
+
+
+
+
   
+//  //
+//  // If any serial byte is available, push it into the input queue
+//  //
+//
+//  if (Serial1.available ()) {
+//    c = Serial1.read ();
+//    PushToQueue (c);
+//    Serial.write(c);
+//  }
+//  
   switch (Status) {
     
     //
-    // We have just booted, and we better wait for the command prompt after we emulate Enter
+    // We have just booted, and we better wait for the AVR command prompt after
     //
     
     case S_BOOTED:      
-      Status = S_WAITING;
-      Serial1.write(0x0A);
+      if (FlagIsSet (F_BUFFER_READY)) {
+        if (strstr (SerialBuffer, "AVR Start!")) {
+        Status = S_WAITING;
+        }
+      }
       break;
       
     //
     // Prepare timeout of 5s
     //
   
-    case S_WAITING:    // Waiting for the command prompt
+    case S_WAITING:    // Waiting for any of the messages from 
       Timeout = 5000;
       Status = S_WAITING_TIMEOUT;
       break;
@@ -354,9 +382,11 @@ void loop() {
 
 //      Serial.println(SerialBuffer);
       SerialBuffer[40] = 0;
-      lcd.home ();                   // go home
-      lcd.print(SerialBuffer);  
+      SerialBuffer[strlen (SerialBuffer) - 1] = 0;
+      lcd.clear ();
+      lcd.print (SerialBuffer);  
 //      lcd.setCursor ( 0, 1 );        // go to the next line
+//      lcd.print (LcdSecondLine);  
       Status = S_WAITING;
       break;
   }
