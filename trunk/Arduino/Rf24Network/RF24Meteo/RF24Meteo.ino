@@ -45,6 +45,7 @@
 
 #define PIN_DHT 3                                 // Pin used to communicate with DTHxx
 #define DHTTYPE DHT22                             // DHT 22  (AM2302)
+#define PIN_SENSOR_POWER 8                        // Pin used for powering the sensors (DHT and BMP)
 
 #define PIN_BATTERY_ANALOG A0                     // Analog pin used to measure the battery voltage 
 #define PIN_BATTERY_MEASURE 15                    // Pull this pin low to measure the bat. voltage (ground of the resistor divider)
@@ -247,6 +248,9 @@ void displaySensorDetails(void) {
 }
 #endif // DEBUG
 
+#define SensorsPowerUp() {  digitalWrite (PIN_SENSOR_POWER, HIGH);  pinMode (PIN_SENSOR_POWER, OUTPUT);}
+#define SensorsPowerDown() {  digitalWrite (PIN_SENSOR_POWER, LOW);  pinMode (PIN_SENSOR_POWER, INPUT);}
+
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //******************************************************************************* 
@@ -255,6 +259,12 @@ void setup(void) {
 
   Serial.begin (57600);
   Serial.println (F("[RF24Meteo]"));
+  
+  //
+  // First, config the sensor power pin and set it to HIGH to give sensors time to initialize
+  //
+  
+  SensorsPowerUp ();
 
   //
   // Read EEPROM to get the node address, ID and other stuff
@@ -276,8 +286,8 @@ void setup(void) {
   Vt100Init (); 
   Dht.begin ();
   if (!Bmp.begin()) {
-    Serial.println ("Ooops, no BMP085 detected ... Check your wiring or I2C ADDR!");
-    while (1);
+    Serial.println (F("No BMP085 detected"));
+    Assert ();
   }
 
 #if DEBUG
@@ -341,6 +351,16 @@ void loop (void) {
   uint16_t Pressure;
   
   //
+  // Prepare everything for the measurement. 
+  // We need to pull down the battery divider ground,
+  // then let's go to sleep for 2 seconds, giving the sensors time to initialize.
+  // We don't want to do when supply voltage is below 3V, as the sensors don't work reliably
+  //
+  
+  pinMode (PIN_BATTERY_MEASURE, OUTPUT);
+  LowPower.idle (SLEEP_30MS, ADC_ON, TIMER2_OFF, TIMER1_OFF, TIMER0_OFF, SPI_OFF, USART0_OFF, TWI_OFF);
+  
+  //
   // If measuring the battery voltage is supported (coef > 0), do the following:
   // Enable the pin as output - that grounds the voltage divider
   // Measure the battery level. Use running average of last 16 values
@@ -348,10 +368,8 @@ void loop (void) {
   //
 
   if (Eeprom.BatteryCoefficient > 0) {
-    pinMode (PIN_BATTERY_MEASURE, OUTPUT);
     BattLevel = analogRead (PIN_BATTERY_ANALOG);
     BattLevelAverage = ((BattLevelAverage * 15) + BattLevel) >> 4;
-//BUGBUG    pinMode (PIN_BATTERY_MEASURE, INPUT);
     Debug ("Battery level ");
     Debug (BattLevel);
     Debug (", average ");
@@ -389,7 +407,26 @@ void loop (void) {
     BattLevel = 0;
     Eeprom.Flags |= F_NO_VOLTAGE;
   }
+
+  pinMode (PIN_BATTERY_MEASURE, INPUT);
   
+  //
+  // If battery voltage is sufficient, enable sensors and go to sleep for 2 seconds, giving the sensors time to initialize.
+  // We don't want to do when supply voltage is below 3V, as the sensors don't work reliably.
+  // In that case, wait for 5 minutes and try again.
+  //
+
+  if (BattLevel <= 100) {
+    Debugln ("Not enough power, going to sleep for 5 minutes");
+    for (MeasureCounter = 0; MeasureCounter < (5 * 60) / 8; MeasureCounter++) {
+      LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);
+    }
+    return;  // This restarts the loop () function
+  }
+  
+  SensorsPowerUp ();
+  LowPower.idle (SLEEP_2S, ADC_OFF, TIMER2_OFF, TIMER1_OFF, TIMER0_OFF, SPI_OFF, USART0_OFF, TWI_OFF);
+
   //
   // Now measure the temperature
   //
@@ -407,6 +444,12 @@ void loop (void) {
   Debug ("Pressure ");
   Debug (Pressure);
   Debugln ("hPA");
+  
+  //
+  // No need to keep sensors powered any longer
+  //
+  
+  SensorsPowerDown ();
    
   Payload.FlagsS = 0;  // BUGBUG
   Payload.BattLevel = BattLevel;
@@ -425,9 +468,11 @@ void loop (void) {
 
   //
   // Put the node to sleep for TemperaturePeriod * 8 seconds
+  // If the battery voltage is under 3.3V, double the time
   //
   
-  for (MeasureCounter = 0; MeasureCounter < Eeprom.MeasurementPeriod; MeasureCounter++) {
+  MeasureCounter = (BattLevel < 130) ? Eeprom.MeasurementPeriod * 2 : Eeprom.MeasurementPeriod;
+  while (MeasureCounter-- > 0) {
     LowPower.powerDown (SLEEP_8S, ADC_OFF, BOD_OFF);
   }
 }
