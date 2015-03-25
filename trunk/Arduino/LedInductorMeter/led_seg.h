@@ -32,6 +32,7 @@ unsigned char seg_hex_table[] = {
     seg_mac(0, 1, 1, 1, 1, 0, 1, 0),             // D
     seg_mac(1, 0, 0, 1, 1, 1, 1, 0),             // E
     seg_mac(1, 0, 0, 0, 1, 1, 1, 0),             // F
+    seg_mac(0, 0, 0, 0, 0, 0, 1, 0),             // dash
 };
 
 #endif // _LED_SEG_H

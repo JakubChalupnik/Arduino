@@ -3,6 +3,7 @@
 
 #define LedAddDot (1 << _P_SEG)
 #define LedBlank 0
+#define LedDash (seg_hex_table [16])
 
 unsigned char LedDisplay [4];
 double pulse, frequency, capacitance, inductance;
@@ -43,6 +44,20 @@ void LedPrint (int Val) {
 
 }
 
+void LedDashed (void) {
+  LedDisplay [0] = LedDash;
+  LedDisplay [1] = LedDash;
+  LedDisplay [2] = LedDash;
+  LedDisplay [3] = LedDash;
+}
+
+void LedDots (void) {
+  LedDisplay [0] |= LedAddDot;
+  LedDisplay [1] |= LedAddDot;
+  LedDisplay [2] |= LedAddDot;
+  LedDisplay [3] |= LedAddDot;
+}
+
 void setup () {
   byte i;
 
@@ -58,13 +73,9 @@ void setup () {
 
   Timer1.initialize (4000);
   Timer1.attachInterrupt (LedInterrupt); 
+  
+  LedDashed ();
 
-  LedDisplay [0] = LedBlank;
-  LedDisplay [1] = LedBlank;
-  LedDisplay [2] = LedBlank;
-  LedDisplay [3] = LedBlank;
-
-    LedPrint (1234);
 //  Serial.begin (115200);
 //  pinMode (11, INPUT);
 //  pinMode (13, OUTPUT);
@@ -81,7 +92,7 @@ void loop () {
   delayMicroseconds (100); //make sure resination is measured
   pulse = pulseIn (11,HIGH,5000);//returns 0 if timeout
   if (pulse > 0.02){ //if a timeout did not occur and it took a reading:
-    capacitance = 1.E-7; //insert capacitance here. Currently using 2uF
+    capacitance = 2.175E-6; //insert capacitance here. Currently using 2uF
     frequency = 1.E6 / (2 * pulse);
     inductance = 1. / (capacitance * frequency * frequency * 4. * 3.14159 * 3.14159);//one of my profs told me just do squares like this
     inductance *= 1E6; //note that this is the same as saying inductance = inductance*1E6
@@ -91,10 +102,19 @@ void loop () {
 //    Serial.print ( frequency );
 //    Serial.print ("\tinductance uH:");
 //    Serial.println ( inductance );
-    Inductance = (unsigned int) ((inductance + 5.) / 10.);
-//    LedPrint (1234);
-    LedPrint (Inductance);
+
+    if (inductance > 9999) {
+      Inductance = (unsigned int) ((inductance + 5.) / 10.);
+      LedPrint (Inductance);
+      LedDots ();
+    } else {
+      Inductance = (unsigned int) (inductance + .5);
+      LedPrint (Inductance);
+    }
+      
     delay (200);
+  } else {
+    LedDashed ();
   }
 }
 
