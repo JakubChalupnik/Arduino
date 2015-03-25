@@ -55,8 +55,8 @@
 // Debug options
 //
 
-#define DEBUG_OW_TEMP 0
-#define DEBUG_ETHERNET 0
+#define DEBUG_OW_TEMP 1
+#define DEBUG_ETHERNET 1
 
 //
 // OneWire support
@@ -101,7 +101,7 @@ byte LcdFlags = 0;
 // EtherCard variables
 //
 
-static uint8_t mymac[6] = { 0x54,0x55,0x58,0x10,0x00,0x25};
+static uint8_t mymac[6] = { 0x54,0x55,0x58,0x10,0x33,0x49};
 static uint8_t myip[4] = { 0,0,0,0 };      // IP and netmask allocated by DHCP
 static uint8_t mynetmask[4] = { 0,0,0,0 };
 static uint8_t gwip[4] = { 0,0,0,0 };
