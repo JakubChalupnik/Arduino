@@ -1,7 +1,6 @@
 //*******************************************************************************
 //*
 //* Arduino Due based central node
-//* Based on example sketches for Adafruit_GFX by Adafruit
 //* Based on example sketches for EtherCard library
 //*
 //*******************************************************************************
@@ -12,6 +11,7 @@
 //* Kubik       20.2.2015 Added two RF24 modules
 //* Kubik       28.2.2015 Added three LEDs
 //* Kubik       1.3.2015  Added time support
+//* Kubik       8.3.2015  Removed display support
 //*******************************************************************************
 
 //*******************************************************************************
@@ -19,11 +19,6 @@
 //*******************************************************************************
 //
 // Used pins:
-//  ILI9341 display: HW SPI and
-//   pin 51 - DC
-//   pin 52 - CS
-//   pin 53 - RESET
-//   pin 3  - backlight PWM
 //
 //  nRF24L01+ radios: HW SPI and
 //   pin 10 - CSN 1
@@ -37,6 +32,9 @@
 //   pin 48 - SCK
 //   pin 47 - RESET
 //   pin 46 - CS
+//
+//  RFM12B radio: HW SPI and
+//   pin 52 - CS  (Configured in the library itself!)
 //
 //  Indication LEDs
 //   pin 11 - white LED
@@ -68,10 +66,6 @@
 
 #define VERSION 0 
 
-#include <ILI9341_due_gText.h>
-#include "fonts\Arial_bold_14.h"
-#include "fonts\fixednums15x31.h"
-#include <ILI9341_due.h>
 #include <EtherCard.h>
 #include <SPI.h>
 #include <Time.h>
@@ -79,11 +73,6 @@
 #include "RF24.h"
 #include "RF24Network.h"
 #include "Rf24PacketDefine.h"
-
-#define TFT_DC 51
-#define TFT_CS 52
-#define TFT_RESET 53
-#define TFT_PWM 3
 
 #define NET_RST  47
 #define NET_CS   46
@@ -131,13 +120,6 @@ typedef enum {S_SENSORS, S_TIME, S_STATUS} Screen_t;
 RF24 Radio1 (RF24_1_CE, RF24_1_CSN);
 RF24 Radio2 (RF24_2_CE, RF24_2_CSN);
 RF24Network Network (Radio2);   
-
-//
-// Display related
-//
-
-ILI9341_due tft = ILI9341_due (TFT_CS, TFT_DC);
-ILI9341_due_gText Text (&tft);
 
 //
 // Network related. 
@@ -348,8 +330,6 @@ char *PayloadToString (int Index) {
   char *b;
   SensorPayload_t *p = &Sensors[Index].Payload;
 
-  Text.setFontColor ((now () - Sensors[Index].LastReport) > 300 ? ILI9341_RED : ILI9341_WHITE, ILI9341_BLACK);
-  
   b = Buffer + sprintf (Buffer, "%c%c ", (char) (p->SensorId >> 8), (char) (p->SensorId & 0xFF));
   
   if (p->BattLevel == 255) {
@@ -387,15 +367,6 @@ inline uint16_t GetLightIntensity (void) {
   return 1023 - analogRead (LIGHT_SENSOR);  
 }
 
-void BacklightSet (uint8_t Value) {
-
-  if (Value > sizeof (LuminosityTable)) {
-    Value = 31;
-  }
-  
-  analogWrite (TFT_PWM, 255 - LuminosityTable[Value]);
-}
-
 //*******************************************************************************
 //*                            Arduino setup method                             *
 //******************************************************************************* 
@@ -407,12 +378,9 @@ void setup () {
   // Initialize pins used for resets of various peripherals, and reset all of them
   //
   
-  pinMode (TFT_RESET, OUTPUT);
   pinMode (NET_RST, OUTPUT);
-  digitalWrite (TFT_RESET, LOW);
   digitalWrite (NET_RST, LOW);
   delay (1);
-  digitalWrite (TFT_RESET, HIGH);
   digitalWrite (NET_RST, HIGH);
   delay (10);
   
@@ -436,23 +404,6 @@ void setup () {
   Serial.begin (57600);
   while (!Serial); 
   Serial.println ("[Arduino Due Central Node!]"); 
-
-  //
-  //  Initialize the display, set small text and red color for status messages
-  //
-  
-  tft.begin ();
-  tft.setRotation(iliRotation270);
-  tft.fillScreen (ILI9341_BLACK);
-  
-  pinMode (TFT_PWM, OUTPUT);
-  BacklightSet (31);
-  
-  Text.defineArea (0, 0, 320, 240);
-  Text.selectFont (Arial_bold_14);
-  Text.setFontLetterSpacing (5);
-  Text.setFontMode (gTextFontMode_Solid);
-  Text.setFontColor (ILI9341_WHITE, ILI9341_BLACK);
 
   //
   // Initialise RF24 stuff.
@@ -491,9 +442,9 @@ void setup () {
   //
   
   if (ether.begin (sizeof Ethernet::buffer, mymac, NET_CS) == 0) {
-    Text.println ("Failed to access Ethernet controller");
+    Debugln ("Failed to access Ethernet controller");
   } else {
-    Text.println ("Ethernet controller initialized");
+    Debugln ("Ethernet controller initialized");
     Flags |= F_ETHERNET;
   }
 
@@ -502,12 +453,12 @@ void setup () {
     ether.staticSetup (myip, gwip);
     #else
     if (!ether.dhcpSetup ()) {
-      Text.println ("DHCP failed, using static IP");
+      Debugln ("DHCP failed, using static IP");
       ether.staticSetup (myip, gwip);
     }
     #endif
   }
-  
+
   //
   // Other init
   //
@@ -597,24 +548,20 @@ void loop() {
     UpdateLeds ();
     UpdateButtons (); 
     LightIntensity = ((LightIntensity * 7) + GetLightIntensity ()) / 8;
-    if (LightIntensity < 100) {
-      BacklightSet (7);
-    } else {
-      BacklightSet (31);
-    }      
   }
 
   //
   // Execute the following code every second. Use the recommended subtracting method to handle millis() overflow
   //
 
-  if ((millis () - LastTime) >= 1000) {
+  if ((millis () - LastTime) >= 10000) {
     LastTime = millis ();
 
     BlinkLed (LED_YELLOW);
     if (Screen == S_TIME) {
       ScreenNeedsUpdate = true;
     }
+    
   }
 
   //
@@ -625,39 +572,8 @@ void loop() {
     return;
   }
   
-  if (ScreenNeedsClear) {
-    Text.clearArea (ILI9341_BLACK);  
+  for (i = 0; i < SensorsCount; i++) {
+    Serial.println (PayloadToString (i));
   }
 
-  switch (Screen) {
-    case S_SENSORS:
-      Text.selectFont (Arial_bold_14);
-      for (i = 0; i < SensorsCount; i++) {
-        Text.drawString (PayloadToString (i), 0, i * 15);
-      }
-      break;
-
-    case S_TIME:
-      t = now ();
-      Text.setFontColor (ILI9341_WHITE, ILI9341_BLACK);
-      Text.selectFont (fixednums15x31);
-      sprintf (buff, "%d:%2.2d:%2.2d ", hour (t), minute (t), second (t));
-      Text.drawString (buff, 0, 0);
-      break;
-      
-    case S_STATUS:
-      Text.setFontColor (ILI9341_RED, ILI9341_BLACK);
-      Text.selectFont (Arial_bold_14);
-      Text.cursorToXY (0, 0);
-      sprintf (buff, "IP = %d.%d.%d.%d ", ether.myip[0], ether.myip[1], ether.myip[2], ether.myip[3]);
-      Text.println (buff);
-      sprintf (buff, "GW = %d.%d.%d.%d ", ether.gwip[0], ether.gwip[1], ether.gwip[2], ether.gwip[3]);
-      Text.println (buff);
-      sprintf (buff, "DNS = %d.%d.%d.%d ", ether.dnsip[0], ether.dnsip[1], ether.dnsip[2], ether.dnsip[3]);
-      Text.println (buff);
-      break;
-
-    default:
-      break;
-  }
 } 
