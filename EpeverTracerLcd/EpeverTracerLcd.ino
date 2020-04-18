@@ -1,3 +1,4 @@
+#include <Bounce2.h>
 #include <movingAvg.h>
 #include <LibPrintf.h>
 #include <ModbusRtu.h>
@@ -29,6 +30,12 @@ LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 
 SoftwareSerial mySerial(2, 3);
 
+//
+// Input pins
+//
+
+#define ButtonPin 11
+
 /**
  *  Modbus object declaration
  *  u8id : node id = 0 for master, = 1..247 for slave
@@ -39,10 +46,19 @@ SoftwareSerial mySerial(2, 3);
 Modbus master(0, mySerial, 10); // this is master and RS-232 or USB-FTDI via software serial
 
 //
+// Button debouncer
+//
+
+Bounce Button = Bounce(); 
+
+//
 // Global variables used for statistics
 //
 
 uint16_t BtStatus, ChStatus;
+
+uint16_t DailyGen, DailyCon;
+uint16_t MonthlyGen, MonthlyCon;
 
 movingAvg PvPowerAv (4);
 movingAvg LdPowerAv (4);
@@ -119,8 +135,8 @@ void ModbusTask (void) {
   case 5:
     Status = master.poll(); // check incoming messages
     if (master.getState() == COM_IDLE) {
-      u8state = 0;
-      u32wait = millis() + 1000; 
+      u8state++;
+      u32wait = millis() + 10; 
       if (Status > 0) {
         BtStatus = ModbusData [0];
         ChStatus = ModbusData [1];
@@ -129,6 +145,38 @@ void ModbusTask (void) {
       }
     }
     break;
+
+  case 6: 
+    if (millis() > u32wait) u8state++; 
+    break;
+  
+  case 7: 
+    Telegram.u8id = 1;        
+    Telegram.u8fct = 4; 
+    Telegram.u16RegAdd = 0x3300;
+    Telegram.u16CoilsNo = 0x10;
+    Telegram.au16reg = ModbusData;
+    memset (ModbusData, 0, sizeof (ModbusData));
+    master.query (Telegram);
+    u8state++;
+    break;
+
+  case 8:
+    Status = master.poll(); // check incoming messages
+    if (master.getState() == COM_IDLE) {
+      u8state = 0;
+      u32wait = millis() + 1000; 
+      if (Status > 0) {
+        DailyGen = ModbusData [0x0C];
+        DailyCon = ModbusData [0x04];
+        MonthlyGen = ModbusData [0x0E];
+        MonthlyCon = ModbusData [0x06];
+      } else {
+        ModbusErrors++;
+      }
+    }
+    break;
+    
   }
 }
 
@@ -181,6 +229,14 @@ void setup () {
   LdCurrentAv.begin ();
   BtCurrentAv.begin ();
   BtVoltageAv.begin ();
+
+  //
+  // Button(s)
+  //
+
+  pinMode (ButtonPin, INPUT_PULLUP);
+  Button.attach (ButtonPin);
+  Button.interval (5); 
 }
 
 //
@@ -204,6 +260,7 @@ void loop () {
   // 
 
   ModbusTask ();
+  Button.update ();
 
   // 
   // Any code above is executed on every loop
@@ -236,11 +293,20 @@ void loop () {
 
   lcd.clear ();
   lcd.home ();
-  sprintf (buff, "%c %4.1fW  %c %4.1fW", 2, (float) PvPowerAv.getAvg () / 100.0, 3, (float) LdPowerAv.getAvg () / 100.0);
-  lcd.print (buff);
-  lcd.setCursor (0, 1);
-  sprintf (buff, "%c %5.2fV  %+5.1fA", 1, (float) BtVoltageAv.getAvg () / 100.0, (float) ((int16_t) BtCurrentAv.getAvg () - (int16_t) LdCurrentAv.getAvg ()) / 100.0);
-  lcd.print (buff);
+
+  if (Button.read() == LOW) {
+    sprintf (buff, "D  %3dWh  %3dWh", DailyGen * 10, DailyCon * 10);
+    lcd.print (buff);
+    lcd.setCursor (0, 1);
+    sprintf (buff, "M %4.1fkW %4.1fkW", (float) MonthlyGen / 100.0, (float) MonthlyCon / 100.0);
+    lcd.print (buff);
+  } else {
+    sprintf (buff, "%c %4.1fW  %c %4.1fW", 2, (float) PvPowerAv.getAvg () / 100.0, 3, (float) LdPowerAv.getAvg () / 100.0);
+    lcd.print (buff);
+    lcd.setCursor (0, 1);
+    sprintf (buff, "%c %5.2fV  %+5.1fA", 1, (float) BtVoltageAv.getAvg () / 100.0, (float) ((int16_t) BtCurrentAv.getAvg () - (int16_t) LdCurrentAv.getAvg ()) / 100.0);
+    lcd.print (buff);
+  }
   
   if ((millis () - Seconds10) < 10000) {
     return;
