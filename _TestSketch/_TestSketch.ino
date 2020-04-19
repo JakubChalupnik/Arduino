@@ -80,19 +80,22 @@ uint8_t TimeUpdated = 0;
 
 void GetTimeResponse (void) {
   static uint8_t State = 0;
-  static uint32_t Millis = 0;
-  static uint32_t Waiting = 0;
+  uint32_t Now;
+  static uint32_t PacketSentMillis = 0;
+  static uint32_t WaitingMillis = 0;
   int cb;
 
   switch (State) {
     case 0:
       sendNTPpacket(timeServerIP); // send an NTP packet to a time server
       State++;
-      Waiting = millis () + 5000;
+      PacketSentMillis = millis ();
+//      Waiting = millis () + 5000;
       break;
 
     case 1:
-      if (Waiting <= millis ()) {   // No NTP answer within 5 seconds, start again from scratch
+      Now = millis ();
+      if ((Now - PacketSentMillis) >= 5000) {   // No NTP answer within 5 seconds, start again from scratch
         State = 0;
       } else {
         cb = udp.parsePacket();
@@ -112,12 +115,13 @@ void GetTimeResponse (void) {
     case 2:
       if (!TimeUpdated) {     // Time has been processed, go to a waiting loop
         State++;
-        Millis = millis () + 10000;
+        WaitingMillis = millis ();
       }
       break;
 
     case 3:
-      if (Millis <= millis ()) {    // We were waiting long enough, get the time again
+      Now = millis ();
+      if ((Now - WaitingMillis) >= 10000) {    // We were waiting long enough, get the time again
         State = 0;
       }
       break; 
